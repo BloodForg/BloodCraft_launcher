@@ -1,0 +1,23 @@
+[
+  {
+    "id": "news-1",
+    "title": "Сезон Crimson стартовал",
+    "excerpt": "Новый боевой пропуск, косметика и недельные испытания уже доступны.",
+    "bannerUrl": "https://images.unsplash.com/photo-1493711662062-fa541adb3fc8?auto=format&fit=crop&w=1400&q=80",
+    "date": "2026-02-12"
+  },
+  {
+    "id": "news-2",
+    "title": "Оптимизация лаунчера",
+    "excerpt": "Улучшен холодный старт и визуальная плавность интерфейса.",
+    "bannerUrl": "https://images.unsplash.com/photo-1461749280684-dccba630e2f6?auto=format&fit=crop&w=1400&q=80",
+    "date": "2026-02-09"
+  },
+  {
+    "id": "news-3",
+    "title": "Рейтинговый уикенд",
+    "excerpt": "x2 награды за PvE активности и дополнительный лут с мировых боссов.",
+    "bannerUrl": "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1400&q=80",
+    "date": "2026-02-06"
+  }
+]

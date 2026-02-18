@@ -1,0 +1,54 @@
+[
+  {
+    "id": "vanilla-plus",
+    "name": "Vanilla+",
+    "shortDesc": "Классический survival с комфортными QoL механиками.",
+    "longDesc": "Основной сервер BloodCraft с аккуратным балансом экономики, PvE активностями и еженедельными событиями.",
+    "status": "Online",
+    "bannerUrl": "https://images.unsplash.com/photo-1606112219348-204d7d8b94ee?auto=format&fit=crop&w=1600&q=80",
+    "version": "1.20.6",
+    "tags": ["Survival", "Economy", "Events"],
+    "playersOnline": 312,
+    "maxPlayers": 1000,
+    "pingMs": 24
+  },
+  {
+    "id": "hardcore-realm",
+    "name": "Hardcore Realm",
+    "shortDesc": "Хардкор режим с повышенным риском и редкими ресурсами.",
+    "longDesc": "Сложный сервер для опытных игроков с усиленными мобами, PvP-зонами и ограниченным восстановлением.",
+    "status": "Offline",
+    "bannerUrl": "https://images.unsplash.com/photo-1534422298391-e4f8c172dddb?auto=format&fit=crop&w=1600&q=80",
+    "version": "1.20.4",
+    "tags": ["Hardcore", "PvP", "Challenge"],
+    "playersOnline": 0,
+    "maxPlayers": 500,
+    "pingMs": 0
+  },
+  {
+    "id": "skyblock-lab",
+    "name": "SkyBlock Lab",
+    "shortDesc": "Экспериментальный островной режим с сезоном челленджей.",
+    "longDesc": "Лаборатория механик SkyBlock: временные ивенты, кооп-острова и сезонные таблицы лидеров.",
+    "status": "Maintenance",
+    "bannerUrl": "https://images.unsplash.com/photo-1627856013091-fed6e4e30025?auto=format&fit=crop&w=1600&q=80",
+    "version": "1.20.6",
+    "tags": ["SkyBlock", "Season", "Coop"],
+    "playersOnline": 0,
+    "maxPlayers": 400,
+    "pingMs": 0
+  },
+  {
+    "id": "adventure-core",
+    "name": "Adventure Core",
+    "shortDesc": "Сюжетные квесты и данжи в кооперативном формате.",
+    "longDesc": "PvE-направленный сервер с прогрессом по главам, боссами, инстансами и системой наград.",
+    "status": "Online",
+    "bannerUrl": "https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&w=1600&q=80",
+    "version": "1.20.6",
+    "tags": ["PvE", "Quests", "Dungeons"],
+    "playersOnline": 158,
+    "maxPlayers": 700,
+    "pingMs": 31
+  }
+]

@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, Segoe UI, system-ui, sans-serif;
+  background: radial-gradient(circle at 10% 0%, #141922 0%, #0b0d10 40%), #0b0d10;
+  color: #e6eaf2;
+}
+
+@layer components {
+  .panel {
+    @apply rounded-[20px] border border-white/10 bg-bc-card shadow-[0_10px_30px_rgba(0,0,0,0.26)];
+  }
+
+  .field {
+    @apply h-11 w-full rounded-[18px] border border-white/10 bg-bc-bgSoft px-3 text-sm text-bc-text outline-none transition-all duration-200 ease-premium placeholder:text-bc-muted focus:border-bc-accent;
+  }
+
+  .pill {
+    @apply rounded-full border border-white/10 bg-bc-cardSoft px-4 py-2 text-sm text-bc-muted transition-all duration-200 ease-premium hover:border-[#22E11D2E] hover:text-bc-text active:scale-[0.98];
+  }
+
+  .pill-active {
+    @apply border-bc-accent bg-[#211217] text-white shadow-accent;
+  }
+
+  .btn-primary {
+    @apply rounded-[20px] border border-bc-accent bg-bc-accent px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 ease-premium hover:brightness-110 active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply rounded-[18px] border border-[#66E11D2E] bg-bc-cardSoft px-4 py-2 text-sm text-bc-text transition-all duration-200 ease-premium hover:border-bc-accent hover:bg-[#2A171C] active:scale-[0.98];
+  }
+
+  .btn-ghost {
+    @apply rounded-[14px] border border-white/10 bg-bc-cardSoft px-4 py-2 text-sm text-bc-muted transition-all duration-200 ease-premium hover:border-[#22E11D2E] hover:text-bc-text active:scale-[0.98];
+  }
+
+  .hover-card {
+    @apply transition-all duration-200 ease-premium hover:-translate-y-[1px] hover:border-[#22E11D2E];
+  }
+}

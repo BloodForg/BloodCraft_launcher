@@ -1,0 +1,20 @@
+[
+  {
+    "id": "task-1",
+    "title": "Скачивание клиента",
+    "status": "downloading",
+    "progress": 45
+  },
+  {
+    "id": "task-2",
+    "title": "Проверка файлов",
+    "status": "verifying",
+    "progress": 68
+  },
+  {
+    "id": "task-3",
+    "title": "Обновление модпаков",
+    "status": "paused",
+    "progress": 21
+  }
+]
