@@ -16,6 +16,13 @@ Desktop UI-template in BloodCraft visual style.
 Build:
 - `npm run build`
 
+## Release (Local macOS DMG)
+1. `npm ci`
+2. `npm run dist:mac`
+3. Result file: `release/BloodCraft.dmg`
+
+Target Minecraft version: Vanilla+ 1.21.1
+
 ## Where to edit mock data
 - `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/servers.mock.json`
 - `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/news.mock.json`
