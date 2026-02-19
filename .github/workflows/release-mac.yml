@@ -38,6 +38,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ -d "$HOME/Library/Caches/electron" ]; then
+            xattr -cr "$HOME/Library/Caches/electron" || true
+          fi
+          if [ -d "$HOME/Library/Caches/electron-builder" ]; then
+            xattr -cr "$HOME/Library/Caches/electron-builder" || true
+          fi
+          xattr -cr "$GITHUB_WORKSPACE" || true
+
+          export CSC_IDENTITY_AUTO_DISCOVERY=false
           npm run dist:mac || (echo "Retrying dist:mac..." && sleep 10 && npm run dist:mac)
 
       - name: Locate DMG
