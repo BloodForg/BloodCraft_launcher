@@ -8,7 +8,7 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "pack": "npm run build && electron-builder --dir",
-    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg",
+    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never",
     "preview": "vite preview",
     "lint": "eslint ."
   },
