@@ -23,15 +23,22 @@ Build:
 
 ## Release
 - Create release tag:
-  - `git tag vX.Y.Z`
+  - `git tag v0.1.0`
   - `git push --tags`
-- Download DMG from GitHub Releases.
-- Latest direct download: `https://github.com/BloodForg/BloodCraft_launcher/releases/latest/download/BloodCraft.dmg`
-- GitHub Actions workflow: `.github/workflows/release-mac.yml`
+- GitHub Actions workflow builds DMG and uploads it to VDS:
+  - `.github/workflows/release-mac-to-vds.yml`
 
 ## Download macOS
-- `https://github.com/BloodForg/BloodCraft_launcher/releases/latest/download/BloodCraft.dmg`
-- If this URL returns 404, create and push a release tag (for example `v0.1.0`) and wait for the GitHub Actions release workflow to finish.
+- `https://46.181.94.25/download`
+- Direct file: `https://46.181.94.25/downloads/BloodCraft.dmg`
+- DMG is built in GitHub Actions and uploaded to VDS.
+
+## GitHub Secrets (required)
+- `VDS_HOST` (example: `46.181.94.25`)
+- `VDS_USER` (example: `ruslan`)
+- `VDS_SSH_KEY` (private SSH key for CI, no passphrase)
+- `VDS_PORT` (example: `22`)
+- `VDS_PATH` (example: `/var/www/bloodcraft/downloads`)
 
 Target Minecraft version: Vanilla+ 1.21.11
 
