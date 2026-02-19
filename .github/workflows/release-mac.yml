@@ -47,7 +47,20 @@ jobs:
           xattr -cr "$GITHUB_WORKSPACE" || true
 
           export CSC_IDENTITY_AUTO_DISCOVERY=false
-          npm run dist:mac || (echo "Retrying dist:mac..." && sleep 10 && npm run dist:mac)
+          if ! npm run dist:mac; then
+            echo "Retrying dist:mac..."
+            sleep 10
+            if ! npm run dist:mac; then
+              echo "Fallback: building .app via pack and creating DMG via hdiutil"
+              npm run pack
+              APP_PATH="$(find release -maxdepth 3 -type d -name 'BloodCraft.app' | head -n 1)"
+              if [ -z "$APP_PATH" ]; then
+                echo "BloodCraft.app not found after pack"
+                exit 1
+              fi
+              hdiutil create -volname "BloodCraft" -srcfolder "$APP_PATH" -ov -format UDZO release/BloodCraft.dmg
+            fi
+          fi
 
       - name: Locate DMG
         id: dmg
