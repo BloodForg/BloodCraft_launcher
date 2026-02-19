@@ -55,6 +55,11 @@ jobs:
             exit 1
           fi
 
+          if [ "$(basename "$DMG_PATH")" != "BloodCraft.dmg" ]; then
+            echo "Expected file name BloodCraft.dmg, got: $(basename "$DMG_PATH")"
+            exit 1
+          fi
+
           echo "path=$DMG_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Resolve release tag
