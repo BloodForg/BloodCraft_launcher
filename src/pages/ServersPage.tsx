@@ -2,6 +2,7 @@ import clsx from 'clsx';
 import { useMemo } from 'react';
 import { useLauncherStore } from '../store/useLauncherStore';
 import { StatusBadge } from '../components/StatusBadge';
+import { TARGET_MINECRAFT_VERSION } from '../config/version';
 
 export const ServersPage = () => {
   const { servers, selectedServerId, setSelectedServer, filter, setFilter } = useLauncherStore((s) => ({
@@ -36,7 +37,7 @@ export const ServersPage = () => {
 
           <select className="field" value={filter.version} onChange={(e) => setFilter({ version: e.target.value })}>
             <option>Все версии</option>
-            <option>1.21.11</option>
+            <option>{TARGET_MINECRAFT_VERSION}</option>
           </select>
 
           <label className="inline-flex items-center gap-2 rounded-[18px] border border-white/10 bg-bc-cardSoft px-4 text-sm">
