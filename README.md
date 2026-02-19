@@ -21,7 +21,14 @@ Build:
 2. `npm run dist:mac`
 3. Result file: `release/BloodCraft.dmg`
 
-Target Minecraft version: Vanilla+ 1.21.1
+## Release
+- Create release tag:
+  - `git tag vX.Y.Z`
+  - `git push --tags`
+- Download DMG from GitHub Releases.
+- GitHub Actions workflow: `.github/workflows/release-mac.yml`
+
+Target Minecraft version: Vanilla+ 1.21.11
 
 ## Where to edit mock data
 - `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/servers.mock.json`

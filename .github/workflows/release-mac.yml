@@ -1,0 +1,84 @@
+name: Release macOS DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (example: v0.1.0). Leave empty to only build.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: npm run build
+
+      - name: Build macOS DMG
+        run: npm run dist:mac
+
+      - name: Locate DMG
+        id: dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG_PATH=""
+          for p in release/BloodCraft.dmg dist/BloodCraft.dmg; do
+            if [ -f "$p" ]; then
+              DMG_PATH="$p"
+              break
+            fi
+          done
+
+          if [ -z "$DMG_PATH" ]; then
+            echo "BloodCraft.dmg was not found in release/ or dist/."
+            exit 1
+          fi
+
+          echo "path=$DMG_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=""
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            TAG="${{ inputs.tag }}"
+          fi
+
+          echo "value=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        if: steps.tag.outputs.value != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.value }}
+          name: BloodCraft ${{ steps.tag.outputs.value }}
+          files: ${{ steps.dmg.outputs.path }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
