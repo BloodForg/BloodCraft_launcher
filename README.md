@@ -26,6 +26,7 @@ Build:
   - `git tag vX.Y.Z`
   - `git push --tags`
 - Download DMG from GitHub Releases.
+- Latest direct download: `https://github.com/BloodForg/BloodCraft_launcher/releases/latest/download/BloodCraft.dmg`
 - GitHub Actions workflow: `.github/workflows/release-mac.yml`
 
 Target Minecraft version: Vanilla+ 1.21.11
