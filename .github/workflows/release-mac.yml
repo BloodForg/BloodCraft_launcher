@@ -34,8 +34,11 @@ jobs:
       - name: Build app
         run: npm run build
 
-      - name: Build macOS DMG
-        run: npm run dist:mac
+      - name: Build macOS DMG (with retry)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dist:mac || (echo "Retrying dist:mac..." && sleep 10 && npm run dist:mac)
 
       - name: Locate DMG
         id: dmg
