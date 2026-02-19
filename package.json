@@ -37,7 +37,7 @@
   },
   "build": {
     "appId": "com.bloodcraft.launcher",
-    "productName": "BloodCraft Launcher",
+    "productName": "BloodCraft",
     "directories": {
       "output": "release"
     },
@@ -51,7 +51,7 @@
       "target": [
         "dmg"
       ],
-      "category": "public.app-category.games",
+      "artifactName": "BloodCraft.dmg",
       "identity": null
     }
   }

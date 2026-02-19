@@ -57,3 +57,5 @@ Target endpoints already documented in files:
 - Real file downloading
 - Real auth
 - Real system dialogs
+
+Final macOS installer file name: BloodCraft.dmg
