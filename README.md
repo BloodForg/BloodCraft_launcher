@@ -29,6 +29,9 @@ Build:
 - Latest direct download: `https://github.com/BloodForg/BloodCraft_launcher/releases/latest/download/BloodCraft.dmg`
 - GitHub Actions workflow: `.github/workflows/release-mac.yml`
 
+## Download macOS
+- `https://github.com/BloodForg/BloodCraft_launcher/releases/latest/download/BloodCraft.dmg`
+
 Target Minecraft version: Vanilla+ 1.21.11
 
 ## Where to edit mock data
