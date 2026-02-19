@@ -93,21 +93,21 @@ const profiles: GameProfile[] = [
   {
     id: 'vanilla-default',
     name: 'Vanilla+ (Default)',
-    minecraftVersion: '1.20.6',
+    minecraftVersion: '1.21.11',
     modsSummary: 'Core Pack (42 mods)',
     jvmArgs: '-Xms2G -Xmx6G -XX:+UseG1GC'
   },
   {
     id: 'vanilla-low',
     name: 'Vanilla+ LowEnd',
-    minecraftVersion: '1.20.6',
+    minecraftVersion: '1.21.11',
     modsSummary: 'Lite Pack (18 mods)',
     jvmArgs: '-Xms2G -Xmx4G -XX:+UseSerialGC'
   },
   {
     id: 'vanilla-high',
     name: 'Vanilla+ High',
-    minecraftVersion: '1.20.6',
+    minecraftVersion: '1.21.11',
     modsSummary: 'Ultra Pack (61 mods)',
     jvmArgs: '-Xms4G -Xmx10G -XX:+UseG1GC'
   }

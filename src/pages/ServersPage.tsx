@@ -36,8 +36,7 @@ export const ServersPage = () => {
 
           <select className="field" value={filter.version} onChange={(e) => setFilter({ version: e.target.value })}>
             <option>Все версии</option>
-            <option>1.20.6</option>
-            <option>1.20.4</option>
+            <option>1.21.11</option>
           </select>
 
           <label className="inline-flex items-center gap-2 rounded-[18px] border border-white/10 bg-bc-cardSoft px-4 text-sm">
