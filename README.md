@@ -31,6 +31,7 @@ Build:
 
 ## Download macOS
 - `https://github.com/BloodForg/BloodCraft_launcher/releases/latest/download/BloodCraft.dmg`
+- If this URL returns 404, create and push a release tag (for example `v0.1.0`) and wait for the GitHub Actions release workflow to finish.
 
 Target Minecraft version: Vanilla+ 1.21.11
 
