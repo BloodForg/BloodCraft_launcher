@@ -4,6 +4,7 @@ import downloadsMock from '../mocks/downloads.mock.json';
 import { authService } from '../services/authService';
 import { contentService } from '../services/contentService';
 import { statusService } from '../services/statusService';
+import { TARGET_MINECRAFT_VERSION } from '../config/version';
 import type { DownloadTask, GameProfile, NewsItem, PromoItem, ServerItem, TabKey, User } from '../types';
 
 interface Toast {
@@ -93,21 +94,21 @@ const profiles: GameProfile[] = [
   {
     id: 'vanilla-default',
     name: 'Vanilla+ (Default)',
-    minecraftVersion: '1.21.11',
+    minecraftVersion: TARGET_MINECRAFT_VERSION,
     modsSummary: 'Core Pack (42 mods)',
     jvmArgs: '-Xms2G -Xmx6G -XX:+UseG1GC'
   },
   {
     id: 'vanilla-low',
     name: 'Vanilla+ LowEnd',
-    minecraftVersion: '1.21.11',
+    minecraftVersion: TARGET_MINECRAFT_VERSION,
     modsSummary: 'Lite Pack (18 mods)',
     jvmArgs: '-Xms2G -Xmx4G -XX:+UseSerialGC'
   },
   {
     id: 'vanilla-high',
     name: 'Vanilla+ High',
-    minecraftVersion: '1.21.11',
+    minecraftVersion: TARGET_MINECRAFT_VERSION,
     modsSummary: 'Ultra Pack (61 mods)',
     jvmArgs: '-Xms4G -Xmx10G -XX:+UseG1GC'
   }
