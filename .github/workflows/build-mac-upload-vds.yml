@@ -1,0 +1,60 @@
+name: Build macOS DMG and Upload to VDS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-upload-mac:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: npm run build
+
+      - name: Build macOS DMG
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist:mac
+
+      - name: Verify DMG artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s release/BloodCraft.dmg
+          ls -lah release/BloodCraft.dmg
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VDS_SSH_KEY }}
+
+      - name: Add VDS host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload DMG to VDS
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}" "mkdir -p '${{ secrets.VDS_PATH }}'"
+          scp -P "${{ secrets.VDS_PORT }}" release/BloodCraft.dmg "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:${{ secrets.VDS_PATH }}/BloodCraft.dmg"
+          ssh -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}" "chmod 644 '${{ secrets.VDS_PATH }}/BloodCraft.dmg' && ls -la '${{ secrets.VDS_PATH }}' && test -s '${{ secrets.VDS_PATH }}/BloodCraft.dmg'"

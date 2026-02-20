@@ -1,0 +1,74 @@
+name: Build Windows EXE and Upload to VDS
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-upload-win:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app
+        run: npm run build
+
+      - name: Build Windows EXE
+        shell: pwsh
+        run: npm run dist:win
+
+      - name: Normalize EXE artifact name
+        shell: pwsh
+        run: |
+          $stableExe = "release/BloodCraft.exe"
+          if (-not (Test-Path $stableExe)) {
+            $exe = Get-ChildItem -Path release -Filter *.exe -Recurse | Where-Object { $_.Name -notmatch "uninstall" } | Select-Object -First 1
+            if (-not $exe) {
+              throw "Windows EXE artifact was not found in release/"
+            }
+            Copy-Item $exe.FullName $stableExe -Force
+          }
+          if (-not (Test-Path $stableExe)) {
+            throw "release/BloodCraft.exe was not created"
+          }
+          Get-Item $stableExe | Format-List FullName,Length,LastWriteTime
+
+      - name: Setup SSH key for SCP
+        shell: pwsh
+        run: |
+          $sshDir = Join-Path $env:USERPROFILE ".ssh"
+          New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+          $keyPath = Join-Path $sshDir "vds_ci_key"
+          @"
+          ${{ secrets.VDS_SSH_KEY }}
+          "@ | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
+          icacls $keyPath /inheritance:r | Out-Null
+          icacls $keyPath /grant:r "$($env:USERNAME):(R)" | Out-Null
+          Add-Content -Path (Join-Path $sshDir "config") -Value @"
+          Host vds
+            HostName ${{ secrets.VDS_HOST }}
+            User ${{ secrets.VDS_USER }}
+            Port ${{ secrets.VDS_PORT }}
+            IdentityFile $keyPath
+            StrictHostKeyChecking accept-new
+          "@
+
+      - name: Upload EXE to VDS
+        shell: pwsh
+        run: |
+          ssh vds "mkdir -p '${{ secrets.VDS_PATH }}'"
+          scp "release/BloodCraft.exe" "vds:${{ secrets.VDS_PATH }}/BloodCraft.exe"
+          ssh vds "chmod 644 '${{ secrets.VDS_PATH }}/BloodCraft.exe' && test -s '${{ secrets.VDS_PATH }}/BloodCraft.exe'"
