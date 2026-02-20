@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "pack": "npm run build && electron-builder --dir",
     "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "preview": "vite preview",
     "lint": "eslint ."
   },
@@ -53,6 +54,12 @@
       ],
       "artifactName": "BloodCraft.dmg",
       "identity": null
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "BloodCraft.exe"
     }
   }
 }
