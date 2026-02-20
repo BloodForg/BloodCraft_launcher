@@ -16,29 +16,33 @@ Desktop UI-template in BloodCraft visual style.
 Build:
 - `npm run build`
 
-## Release (Local macOS DMG)
+## Release (Local)
 1. `npm ci`
 2. `npm run dist:mac`
 3. Result file: `release/BloodCraft.dmg`
+4. `npm run dist:win`
+5. Result file: `release/BloodCraft.exe`
 
 ## Release
 - Create release tag:
   - `git tag v0.1.0`
   - `git push --tags`
-- GitHub Actions workflow builds DMG and uploads it to VDS:
-  - `.github/workflows/release-mac-to-vds.yml`
+- GitHub Actions workflows build artifacts and upload them to VDS:
+  - `.github/workflows/build-mac-upload-vds.yml`
+  - `.github/workflows/build-win-upload-vds.yml`
 
 ## Download macOS
-- `https://46.181.94.25/download`
-- Direct file: `https://46.181.94.25/downloads/BloodCraft.dmg`
-- DMG is built in GitHub Actions and uploaded to VDS.
+- `http://46.181.94.25/download`
+- Direct file: `http://46.181.94.25/downloads/BloodCraft.dmg`
+- Windows file: `http://46.181.94.25/downloads/BloodCraft.exe`
+- Artifacts are built in GitHub Actions and uploaded to VDS.
 
 ## GitHub Secrets (required)
 - `VDS_HOST` (example: `46.181.94.25`)
 - `VDS_USER` (example: `ruslan`)
 - `VDS_SSH_KEY` (private SSH key for CI, no passphrase)
 - `VDS_PORT` (example: `22`)
-- `VDS_PATH` (example: `/var/www/bloodcraft/downloads`)
+- `VDS_PATH` (example: `/var/www/bloodcraft-downloads`)
 
 Target Minecraft version: Vanilla+ 1.21.11
 
