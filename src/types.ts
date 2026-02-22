@@ -38,6 +38,7 @@ export interface User {
   username: string;
   avatarUrl: string;
   email: string;
+  uuid?: string;
 }
 
 export interface DownloadTask {

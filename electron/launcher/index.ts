@@ -25,6 +25,8 @@ interface LaunchOptions {
   javaPath?: string;
   minMemoryGb?: number;
   maxMemoryGb?: number;
+  username?: string;
+  uuid?: string;
 }
 
 function getMcVersion(distribution: Distribution): string {
@@ -396,7 +398,20 @@ async function collectJarFiles(dirPath: string): Promise<string[]> {
   return out;
 }
 
-function applyLaunchPlaceholders(raw: string, context: { gameDir: string; assetsRoot: string; assetIndex: string; version: string; classPath?: string; serverHost?: string; serverPort?: number }): string {
+function applyLaunchPlaceholders(
+  raw: string,
+  context: {
+    gameDir: string;
+    assetsRoot: string;
+    assetIndex: string;
+    version: string;
+    classPath?: string;
+    serverHost?: string;
+    serverPort?: number;
+    username?: string;
+    uuid?: string;
+  }
+): string {
   const replaceToken = (source: string, token: string, value: string) => source.split(token).join(value);
   const launcherName = 'BloodCraft';
   const launcherVersion = app.getVersion();
@@ -409,8 +424,8 @@ function applyLaunchPlaceholders(raw: string, context: { gameDir: string; assets
     ['${assets_root}', context.assetsRoot],
     ['${assets_index_name}', context.assetIndex],
     ['${version_name}', context.version],
-    ['${auth_player_name}', 'BloodPlayer'],
-    ['${auth_uuid}', randomUUID()],
+    ['${auth_player_name}', context.username ?? 'BloodPlayer'],
+    ['${auth_uuid}', context.uuid ?? '00000000-0000-0000-0000-000000000000'],
     ['${auth_access_token}', '0'],
     ['${user_type}', 'legacy'],
     ['${version_type}', 'release'],
@@ -426,6 +441,22 @@ function applyLaunchPlaceholders(raw: string, context: { gameDir: string; assets
 
 function hasUnresolvedPlaceholder(value: string): boolean {
   return /\$\{[^}]+\}/.test(value);
+}
+
+function hasArg(args: string[], key: string): boolean {
+  return args.includes(key);
+}
+
+function ensureArgPair(args: string[], key: string, value: string): void {
+  if (!hasArg(args, key)) {
+    args.push(key, value);
+  }
+}
+
+async function resolveAssetIndexName(gameDir: string, fallback: string): Promise<string> {
+  const launchMetaPath = path.join(gameDir, 'runtime', 'meta', 'launch.json');
+  const launchMeta = await readJsonSafe<{ paths?: { assetIndex?: string }; assetIndex?: string }>(launchMetaPath);
+  return launchMeta?.paths?.assetIndex ?? launchMeta?.assetIndex ?? fallback;
 }
 
 function sanitizeLaunchArgs(args: string[]): string[] {
@@ -509,16 +540,21 @@ async function launchWithJavaProcess(
   const minMem = Math.max(1, options?.minMemoryGb ?? 2);
   const maxMem = Math.max(minMem, options?.maxMemoryGb ?? 4);
   const assetsRoot = path.join(gameDir, 'assets');
+  const assetIndexName = await resolveAssetIndexName(gameDir, mcVersion);
+  const username = options?.username?.trim() || 'BloodPlayer';
+  const uuid = options?.uuid?.trim() || '00000000-0000-0000-0000-000000000000';
 
   const jvmArgs = sanitizeLaunchArgs((distribution.launch?.jvmArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
       gameDir,
       assetsRoot,
-      assetIndex: mcVersion,
+      assetIndex: assetIndexName,
       version: mcVersion,
       classPath,
       serverHost: distribution.server?.host,
-      serverPort: distribution.server?.port
+      serverPort: distribution.server?.port,
+      username,
+      uuid
     })
   ));
 
@@ -526,13 +562,32 @@ async function launchWithJavaProcess(
     applyLaunchPlaceholders(arg, {
       gameDir,
       assetsRoot,
-      assetIndex: mcVersion,
+      assetIndex: assetIndexName,
       version: mcVersion,
       classPath,
       serverHost: distribution.server?.host,
-      serverPort: distribution.server?.port
+      serverPort: distribution.server?.port,
+      username,
+      uuid
     })
   ));
+
+  ensureArgPair(gameArgs, '--accessToken', '0');
+  ensureArgPair(gameArgs, '--version', mcVersion);
+  ensureArgPair(gameArgs, '--versionType', 'release');
+  ensureArgPair(gameArgs, '--userType', 'legacy');
+  ensureArgPair(gameArgs, '--uuid', uuid);
+  ensureArgPair(gameArgs, '--username', username);
+  ensureArgPair(gameArgs, '--gameDir', gameDir);
+  ensureArgPair(gameArgs, '--assetsDir', assetsRoot);
+  ensureArgPair(gameArgs, '--assetIndex', assetIndexName);
+
+  log.info('[game] final args check', {
+    hasAccessToken: hasArg(gameArgs, '--accessToken'),
+    hasVersion: hasArg(gameArgs, '--version'),
+    hasUsername: hasArg(gameArgs, '--username'),
+    hasUuid: hasArg(gameArgs, '--uuid')
+  });
 
   const args = [`-Xmx${maxMem}G`, `-Xms${minMem}G`, ...jvmArgs, '-cp', classPath, mainClass, ...gameArgs];
 

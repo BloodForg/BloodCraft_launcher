@@ -14,6 +14,7 @@ export interface AuthUser {
   username: string;
   avatarUrl: string;
   email: string;
+  uuid?: string;
 }
 
 export interface AuthSession {
@@ -50,7 +51,8 @@ function normalizeUser(raw: unknown): AuthUser {
   return {
     username: String(obj.username ?? obj.nickname ?? obj.name ?? 'Player'),
     avatarUrl: String(obj.avatarUrl ?? obj.avatar ?? 'https://api.dicebear.com/8.x/shapes/svg?seed=BloodCraft'),
-    email: String(obj.email ?? '')
+    email: String(obj.email ?? ''),
+    uuid: typeof obj.uuid === 'string' ? obj.uuid : undefined
   };
 }
 

@@ -10,6 +10,8 @@ type LaunchOptions = {
   javaPath?: string;
   minMemoryGb?: number;
   maxMemoryGb?: number;
+  username?: string;
+  uuid?: string;
 };
 
 export const gameService = {

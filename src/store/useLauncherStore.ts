@@ -458,7 +458,9 @@ export const useLauncherStore = create<LauncherState>()(
           const launchOk = await gameService.launch({
             javaPath: settings.javaMode === 'custom' ? settings.javaPath : undefined,
             minMemoryGb: Math.max(2, Math.floor(settings.ramGb / 2)),
-            maxMemoryGb: settings.ramGb
+            maxMemoryGb: settings.ramGb,
+            username: get().user?.username,
+            uuid: get().user?.uuid
           });
           if (!launchOk) {
             const failedStatus = await gameService.getStatus().catch(() => null);

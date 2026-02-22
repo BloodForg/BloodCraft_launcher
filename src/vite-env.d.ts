@@ -65,12 +65,12 @@ declare global {
           login: string,
           password: string
         ) => Promise<
-          | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string } } }
+          | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string; uuid?: string } } }
           | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }
         >;
-        me: () => Promise<{ ok: true; user: { username: string; avatarUrl: string; email: string } } | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }>;
+        me: () => Promise<{ ok: true; user: { username: string; avatarUrl: string; email: string; uuid?: string } } | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }>;
         refresh: () => Promise<
-          | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string } } }
+          | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string; uuid?: string } } }
           | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }
         >;
         logout: () => Promise<{ ok: true } | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }>;
@@ -99,7 +99,7 @@ declare global {
         getStatus: () => Promise<LauncherStatus>;
         getDistribution: () => Promise<Distribution | null>;
         install: () => Promise<boolean>;
-        launch: (options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number }) => Promise<boolean>;
+        launch: (options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number; username?: string; uuid?: string }) => Promise<boolean>;
         onProgress: (cb: (progress: InstallProgress) => void) => () => void;
         onGameStatus: (cb: (status: { stage: string; message: string; percent?: number }) => void) => () => void;
         onGameError: (cb: (error: { code: string; message: string }) => void) => () => void;

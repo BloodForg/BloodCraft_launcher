@@ -385,7 +385,7 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('launcher:launch', async (_event, options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number }) => {
+  ipcMain.handle('launcher:launch', async (_event, options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number; username?: string; uuid?: string }) => {
     log.info('[ipc] launcher:launch invoked', options ?? {});
     try {
       await launch((progress: InstallProgress) => emitProgress(progress), options);
