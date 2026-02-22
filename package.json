@@ -68,11 +68,13 @@
       }
     ],
     "mac": {
-      "bundleIdentifier": "ru.thebloodcraft.launcher",
       "target": [
         "dmg",
         "zip"
       ],
+      "extendInfo": {
+        "CFBundleIdentifier": "ru.thebloodcraft.launcher"
+      },
       "icon": "build/app.icns",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,

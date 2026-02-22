@@ -12,7 +12,7 @@ function fail(message) {
 const raw = readFileSync(new URL('../package.json', import.meta.url), 'utf8');
 const pkg = JSON.parse(raw);
 const appId = pkg?.build?.appId;
-const bundleIdentifier = pkg?.build?.mac?.bundleIdentifier;
+const bundleIdentifier = pkg?.build?.mac?.bundleIdentifier ?? pkg?.build?.mac?.extendInfo?.CFBundleIdentifier;
 
 if (appId !== REQUIRED_APP_ID || bundleIdentifier !== REQUIRED_APP_ID) {
   fail(`${ERROR_TEXT}\nExpected appId/bundleIdentifier = "${REQUIRED_APP_ID}", got appId="${appId}" bundleIdentifier="${bundleIdentifier}"`);
