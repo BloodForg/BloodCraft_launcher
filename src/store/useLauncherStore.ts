@@ -3,6 +3,9 @@ import { persist } from 'zustand/middleware';
 import downloadsMock from '../mocks/downloads.mock.json';
 import { authService } from '../services/authService';
 import { contentService } from '../services/contentService';
+import { gameService } from '../services/gameService';
+import { logService } from '../services/logService';
+import { serverService } from '../services/serverService';
 import { statusService } from '../services/statusService';
 import { TARGET_MINECRAFT_VERSION } from '../config/version';
 import type { DownloadTask, GameProfile, NewsItem, PromoItem, ServerItem, TabKey, User } from '../types';
@@ -15,11 +18,22 @@ interface Toast {
 type PlayState = 'idle' | 'launching' | 'disabled';
 
 interface LauncherState {
+  authChecked: boolean;
   tab: TabKey;
   token: string | null;
   user: User | null;
   authLoading: boolean;
   loginForm: { login: string; password: string };
+  settingsOpen: boolean;
+  networkOnline: boolean;
+  networkMessage: string;
+  bottomStatus: string;
+  updater: {
+    status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+    message?: string;
+    progress?: number;
+    version?: string;
+  };
 
   servers: ServerItem[];
   selectedServerId: string | null;
@@ -54,6 +68,11 @@ interface LauncherState {
   toasts: Toast[];
 
   setTab: (tab: TabKey) => void;
+  setSettingsOpen: (open: boolean) => void;
+  setNetworkState: (online: boolean, message?: string) => void;
+  setBottomStatus: (value: string) => void;
+  setUpdaterState: (value: LauncherState['updater']) => void;
+  initSession: () => Promise<void>;
   setLoginForm: (patch: Partial<{ login: string; password: string }>) => void;
   login: () => Promise<void>;
   logout: () => Promise<void>;
@@ -69,7 +88,7 @@ interface LauncherState {
   nextDynamicBanner: () => void;
   setDynamicBannerIndex: (index: number) => void;
 
-  playSelectedServer: () => void;
+  playSelectedServer: () => Promise<void>;
   cyclePlayState: () => void;
 
   setSelectedProfile: (id: string) => void;
@@ -116,14 +135,34 @@ const profiles: GameProfile[] = [
 
 let toastId = 0;
 
+const runLegacyMockLaunch = (setState: (patch: Partial<LauncherState>) => void, getState: () => LauncherState) => {
+  const timer = setInterval(() => {
+    const state = getState();
+    const value = Math.min(100, state.launchProgress + 11);
+    setState({ launchProgress: value });
+
+    if (value >= 100) {
+      clearInterval(timer);
+      setState({ playState: 'idle', launchProgress: 0 });
+      getState().addToast('Запуск клиента (UI-заглушка)');
+    }
+  }, 180);
+};
+
 export const useLauncherStore = create<LauncherState>()(
   persist(
     (set, get) => ({
+      authChecked: false,
       tab: 'home',
       token: null,
       user: null,
       authLoading: false,
       loginForm: { login: '', password: '' },
+      settingsOpen: false,
+      networkOnline: true,
+      networkMessage: 'Сеть в порядке',
+      bottomStatus: 'Лаунчер готов к запуску',
+      updater: { status: 'idle' },
 
       servers: [],
       selectedServerId: null,
@@ -162,6 +201,23 @@ export const useLauncherStore = create<LauncherState>()(
       toasts: [],
 
       setTab: (tab) => set({ tab }),
+      setSettingsOpen: (open) => set({ settingsOpen: open }),
+      setNetworkState: (online, message) => set({ networkOnline: online, networkMessage: message ?? (online ? 'Сеть в порядке' : 'Нет соединения') }),
+      setBottomStatus: (value) => set({ bottomStatus: value }),
+      setUpdaterState: (value) => set({ updater: value }),
+      initSession: async () => {
+        const token = get().token;
+        if (!token) {
+          set({ authChecked: true, user: null });
+          return;
+        }
+        try {
+          const me = await authService.me();
+          set({ user: me, authChecked: true });
+        } catch {
+          set({ token: null, user: null, authChecked: true });
+        }
+      },
       setLoginForm: (patch) => set((s) => ({ loginForm: { ...s.loginForm, ...patch } })),
 
       login: async () => {
@@ -169,17 +225,20 @@ export const useLauncherStore = create<LauncherState>()(
         set({ authLoading: true });
         try {
           const res = await authService.login(login, password);
-          set({ token: res.token, user: res.user, authLoading: false });
+          set({ token: res.token, user: res.user, authLoading: false, authChecked: true });
+          await logService.info(`[auth] login success for ${res.user.username}`);
           get().addToast(`Вы вошли как ${res.user.username}`);
         } catch (error) {
           set({ authLoading: false });
+          await logService.error(`[auth] login failed: ${error instanceof Error ? error.message : 'unknown error'}`);
           get().addToast(error instanceof Error ? error.message : 'Ошибка входа');
         }
       },
 
       logout: async () => {
         await authService.logout();
-        set({ token: null, user: null, playState: 'idle', launchProgress: 0 });
+        set({ token: null, user: null, playState: 'idle', launchProgress: 0, settingsOpen: false });
+        await logService.info('[auth] logout');
         get().addToast('Вы вышли из профиля');
       },
 
@@ -195,7 +254,7 @@ export const useLauncherStore = create<LauncherState>()(
 
       loadContent: async () => {
         const [servers, news, promos] = await Promise.all([
-          contentService.getServers(),
+          serverService.getLauncherServers(),
           contentService.getNews(),
           contentService.getPromos()
         ]);
@@ -248,28 +307,70 @@ export const useLauncherStore = create<LauncherState>()(
         }));
       },
 
-      playSelectedServer: () => {
+      playSelectedServer: async () => {
         const s = get();
         const server = s.servers.find((x) => x.id === s.selectedServerId);
 
-        if (!server || server.status !== 'Online') {
+        if (!s.networkOnline) {
+          set({ playState: 'disabled', bottomStatus: 'Нет соединения' });
+          return;
+        }
+
+        if (!server || server.status !== 'Online' || server.disabled) {
           set({ playState: 'disabled' });
           return;
         }
 
-        set({ playState: 'launching', launchProgress: 0 });
+        set({ playState: 'launching', launchProgress: 0, bottomStatus: 'Подготовка к запуску...' });
+        let unsubscribe: (() => void) | undefined;
 
-        const timer = setInterval(() => {
-          const state = get();
-          const value = Math.min(100, state.launchProgress + 11);
-          set({ launchProgress: value });
+        if (!window.bloodcraft?.launcher) {
+          console.error('[Launcher IPC] window.bloodcraft.launcher is unavailable');
+          get().addToast('Launcher API недоступен, использован mock режим');
+          runLegacyMockLaunch(set, get);
+          return;
+        }
 
-          if (value >= 100) {
-            clearInterval(timer);
-            set({ playState: 'idle', launchProgress: 0 });
-            get().addToast('Запуск клиента (UI-заглушка)');
+        try {
+          const status = await gameService.getStatus();
+          console.log('[Launcher status]', status);
+          await logService.info(`[launcher] status: ${JSON.stringify(status)}`);
+
+          unsubscribe = gameService.onProgress((progress) => {
+            const percent = typeof progress.percent === 'number' ? progress.percent : 0;
+            const message = progress.message ?? 'Обработка...';
+            console.log('[Launcher progress]', progress.stage, message);
+            if (typeof progress.percent === 'number') {
+              set({ launchProgress: progress.percent, bottomStatus: message });
+            } else {
+              set({ bottomStatus: message });
+            }
+            if (progress.stage === 'done') set({ launchProgress: 100, bottomStatus: 'Установка завершена' });
+            if (progress.stage === 'error') set({ bottomStatus: message || 'Ошибка установки' });
+            void logService.info(`[launcher] progress ${progress.stage} ${percent}% ${message}`);
+          });
+
+          const installOk = await gameService.install();
+          if (!installOk) {
+            const failedStatus = await gameService.getStatus().catch(() => null);
+            get().addToast(failedStatus?.lastError ? `Ошибка установки: ${failedStatus.lastError}` : 'Ошибка установки клиента');
+            return;
           }
-        }, 180);
+
+          set({ bottomStatus: 'Запуск Minecraft...' });
+          const launchOk = await gameService.launch();
+          if (!launchOk) {
+            const failedStatus = await gameService.getStatus().catch(() => null);
+            get().addToast(failedStatus?.lastError ? `Ошибка запуска: ${failedStatus.lastError}` : 'Ошибка запуска клиента');
+          }
+        } catch (error) {
+          console.error('[Launcher IPC] play flow failed', error);
+          await logService.error(`[launcher] play flow failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+          get().addToast(error instanceof Error ? error.message : 'Ошибка запуска клиента');
+        } finally {
+          unsubscribe?.();
+          set({ playState: 'idle', launchProgress: 0, bottomStatus: 'Лаунчер готов к запуску' });
+        }
       },
 
       cyclePlayState: () => {

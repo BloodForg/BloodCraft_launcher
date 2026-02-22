@@ -14,6 +14,8 @@ export interface ServerItem {
   playersOnline: number;
   maxPlayers: number;
   pingMs: number;
+  disabled?: boolean;
+  soonLabel?: string;
 }
 
 export interface NewsItem {
