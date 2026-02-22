@@ -30,6 +30,7 @@ interface LaunchOptions {
 }
 
 const TARGET_MC_VERSION = '1.21.11';
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function getMcVersion(distribution: Distribution): string {
   return distribution.mcVersion ?? distribution.minecraft?.version ?? TARGET_MC_VERSION;
@@ -41,6 +42,10 @@ export function getInstanceDir(): string {
 
 function resolveGameDir(instanceId: string): string {
   return path.join(getInstanceDir(), 'game', 'instances', instanceId);
+}
+
+function resolveBundledJavaPath(): string {
+  return path.join(process.resourcesPath, 'jre', 'Contents', 'Home', 'bin', 'java');
 }
 
 function getMetaPath(): string {
@@ -474,6 +479,50 @@ function ensureArgPair(args: string[], key: string, value: string): void {
   }
 }
 
+function isValidUuid(value: string | undefined | null): value is string {
+  if (!value) return false;
+  return UUID_REGEX.test(value.trim());
+}
+
+function offlineUuidFromUsername(username: string): string {
+  const hash = createHash('md5').update(`OfflinePlayer:${username}`, 'utf8').digest();
+  hash[6] = (hash[6] & 0x0f) | 0x30;
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+  const hex = hash.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+function resolveLaunchIdentity(usernameInput: string | undefined, uuidInput: string | undefined): { username: string; uuid: string } {
+  const username = (usernameInput?.trim() || 'BloodPlayer').slice(0, 32);
+  const uuid = isValidUuid(uuidInput) ? uuidInput.trim() : offlineUuidFromUsername(username);
+  log.info(`[game] uuid selected ${uuid} valid=${isValidUuid(uuid)}`);
+  return { username, uuid };
+}
+
+async function resolveJavaPath(options?: LaunchOptions): Promise<{ javaPath: string; source: 'bundled' | 'custom' | 'system' }> {
+  const custom = options?.javaPath?.trim();
+  const bundled = resolveBundledJavaPath();
+  const fallback = '/usr/bin/java';
+
+  if (custom && existsSync(custom) && (await checkJavaAvailable(custom))) {
+    return { javaPath: custom, source: 'custom' };
+  }
+
+  if (existsSync(bundled) && (await checkJavaAvailable(bundled))) {
+    return { javaPath: bundled, source: 'bundled' };
+  }
+
+  if (existsSync(fallback) && (await checkJavaAvailable(fallback))) {
+    return { javaPath: fallback, source: 'system' };
+  }
+
+  if (await checkJavaAvailable('java')) {
+    return { javaPath: 'java', source: 'system' };
+  }
+
+  throw new Error('Java не найдена. Укажите путь в настройках.');
+}
+
 async function resolveAssetIndexName(gameDir: string, fallback: string): Promise<string> {
   const launchMetaPath = path.join(gameDir, 'runtime', 'meta', 'launch.json');
   const launchMeta = await readJsonSafe<{ paths?: { assetIndex?: string }; assetIndex?: string }>(launchMetaPath);
@@ -517,30 +566,7 @@ async function launchWithJavaProcess(
   if (!mainClass) {
     throw new Error('Сборка клиента повреждена или не опубликована');
   }
-
-  const configuredJava = options?.javaPath?.trim();
-  const fallbackJava = '/usr/bin/java';
-  let javaPath = configuredJava && configuredJava.length > 0 ? configuredJava : fallbackJava;
-
-  if (configuredJava && !existsSync(configuredJava)) {
-    log.warn('[game] configured java path not found, fallback to /usr/bin/java', { configuredJava });
-    javaPath = fallbackJava;
-  }
-
-  const javaExists = existsSync(javaPath) || javaPath === 'java';
-  if (!javaExists) {
-    throw new Error('Java не найдена. Укажите путь в настройках.');
-  }
-
-  const javaOk = await checkJavaAvailable(javaPath);
-  if (!javaOk) {
-    const fallbackOk = javaPath !== fallbackJava ? await checkJavaAvailable(fallbackJava) : false;
-    if (fallbackOk) {
-      javaPath = fallbackJava;
-    } else {
-      throw new Error('Java не найдена. Укажите путь в настройках.');
-    }
-  }
+  const { javaPath, source: javaSource } = await resolveJavaPath(options);
 
   const jarFiles = await collectJarFiles(gameDir);
   if (!jarFiles.length) {
@@ -561,10 +587,9 @@ async function launchWithJavaProcess(
   const minMem = Math.max(1, options?.minMemoryGb ?? 2);
   const maxMem = Math.max(minMem, options?.maxMemoryGb ?? 4);
   const assetsRoot = path.join(gameDir, 'runtime', 'assets');
-  const launcherGameDir = path.join(getInstanceDir(), 'game');
   const assetIndexName = await resolveAssetIndexName(gameDir, mcVersion);
-  const username = options?.username?.trim() || 'BloodPlayer';
-  const uuid = options?.uuid?.trim() || '00000000-0000-0000-0000-000000000000';
+  const launcherGameDir = path.join(getInstanceDir(), 'game');
+  const { username, uuid } = resolveLaunchIdentity(options?.username, options?.uuid);
 
   const jvmArgs = sanitizeLaunchArgs((distribution.launch?.jvmArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
@@ -579,6 +604,11 @@ async function launchWithJavaProcess(
       uuid
     })
   ));
+
+  if (process.platform === 'darwin' && !jvmArgs.includes('-XstartOnFirstThread')) {
+    jvmArgs.unshift('-XstartOnFirstThread');
+    log.info('[game] added -XstartOnFirstThread');
+  }
 
   const gameArgs = sanitizeLaunchArgs((distribution.launch?.gameArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
@@ -618,7 +648,7 @@ async function launchWithJavaProcess(
   const logStream = createWriteStream(logPath, { flags: 'a' });
 
   onProgress?.({ stage: 'launching', message: 'Запуск Minecraft...' });
-  log.info('[game] resolved java path', { requestedJavaPath: configuredJava, javaPath });
+  log.info(`[game] resolved java path: ${javaPath} source=${javaSource}`);
   const classPathEntriesCount = classPath.split(process.platform === 'darwin' ? ':' : path.delimiter).filter(Boolean).length;
   log.info('[game] launching command summary', {
     javaPath,
@@ -655,7 +685,7 @@ async function launchWithJavaProcess(
       settled = true;
       onProgress?.({ stage: 'done', percent: 100, message: 'Minecraft запущен' });
       resolve();
-    }, 10_000);
+    }, 15_000);
 
     const settleError = (error: Error) => {
       if (settled) return;

@@ -1,6 +1,6 @@
 {
   "name": "bloodcraft-launcher",
-  "version": "1.1.0",
+  "version": "1.0.2",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -8,8 +8,9 @@
     "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && electron .\"",
     "icons:generate": "node scripts/generate-icons.mjs && icon-gen -i build/icon.png -o build --icns --report",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json",
+    "fetch:jre": "node scripts/fetch-jre.mjs",
     "pack": "npm run build && electron-builder --dir",
-    "dist:mac": "npm run icons:generate && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
+    "dist:mac": "npm run icons:generate && npm run fetch:jre && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
     "dist:win": "npm run icons:generate && npm run build && electron-builder --win nsis --publish never",
     "guard:appid": "node scripts/guard-appid.mjs",
     "verify:mac-zip": "node scripts/verify-mac-zip.mjs",
@@ -59,6 +60,12 @@
       "electron/**",
       "build/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build-resources/jre",
+        "to": "jre"
+      }
     ],
     "publish": [
       {
