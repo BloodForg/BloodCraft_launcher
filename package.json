@@ -1,6 +1,6 @@
 {
   "name": "bloodcraft-launcher",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -62,7 +62,8 @@
       {
         "provider": "github",
         "owner": "BloodForg",
-        "repo": "BloodCraft_launcher"
+        "repo": "BloodCraft_launcher",
+        "releaseType": "release"
       }
     ],
     "mac": {
