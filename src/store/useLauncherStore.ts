@@ -28,6 +28,8 @@ interface LauncherState {
   networkOnline: boolean;
   networkMessage: string;
   bottomStatus: string;
+  playHelpAction: 'none' | 'open-site' | 'retry';
+  playHelpText?: string;
   updater: {
     status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
     message?: string;
@@ -162,6 +164,8 @@ export const useLauncherStore = create<LauncherState>()(
       networkOnline: true,
       networkMessage: 'Сеть в порядке',
       bottomStatus: 'Лаунчер готов к запуску',
+      playHelpAction: 'none',
+      playHelpText: undefined,
       updater: { status: 'idle' },
 
       servers: [],
@@ -312,16 +316,16 @@ export const useLauncherStore = create<LauncherState>()(
         const server = s.servers.find((x) => x.id === s.selectedServerId);
 
         if (!s.networkOnline) {
-          set({ playState: 'disabled', bottomStatus: 'Нет соединения' });
+          set({ playState: 'disabled', bottomStatus: 'Нет соединения', playHelpAction: 'retry', playHelpText: 'Проверьте сеть и попробуйте снова.' });
           return;
         }
 
         if (!server || server.status !== 'Online' || server.disabled) {
-          set({ playState: 'disabled' });
+          set({ playState: 'disabled', playHelpAction: 'none', playHelpText: undefined });
           return;
         }
 
-        set({ playState: 'launching', launchProgress: 0, bottomStatus: 'Подготовка к запуску...' });
+        set({ playState: 'launching', launchProgress: 0, bottomStatus: 'Подготовка к запуску...', playHelpAction: 'none', playHelpText: undefined });
         let unsubscribe: (() => void) | undefined;
 
         if (!window.bloodcraft?.launcher) {
@@ -353,7 +357,21 @@ export const useLauncherStore = create<LauncherState>()(
           const installOk = await gameService.install();
           if (!installOk) {
             const failedStatus = await gameService.getStatus().catch(() => null);
-            get().addToast(failedStatus?.lastError ? `Ошибка установки: ${failedStatus.lastError}` : 'Ошибка установки клиента');
+            const rawError = failedStatus?.lastError ?? '';
+            const has404 = rawError.includes('404');
+            if (has404) {
+              await logService.error(`[launcher] install failed with 404: ${rawError}`);
+              set({
+                playState: 'disabled',
+                bottomStatus: 'Файлы клиента недоступны',
+                playHelpAction: 'open-site',
+                playHelpText: 'Клиент пока не опубликован. Проверьте позже.'
+              });
+              get().addToast('Клиент пока не опубликован');
+              return;
+            }
+            get().addToast(rawError ? 'Не удалось установить клиент' : 'Ошибка установки клиента');
+            set({ playState: 'disabled', bottomStatus: 'Не удалось установить клиент', playHelpAction: 'retry', playHelpText: 'Попробуйте снова чуть позже.' });
             return;
           }
 
@@ -361,15 +379,20 @@ export const useLauncherStore = create<LauncherState>()(
           const launchOk = await gameService.launch();
           if (!launchOk) {
             const failedStatus = await gameService.getStatus().catch(() => null);
-            get().addToast(failedStatus?.lastError ? `Ошибка запуска: ${failedStatus.lastError}` : 'Ошибка запуска клиента');
+            await logService.error(`[launcher] launch failed: ${failedStatus?.lastError ?? 'unknown'}`);
+            get().addToast('Ошибка запуска клиента');
+            set({ playState: 'disabled', bottomStatus: 'Не удалось запустить клиент', playHelpAction: 'retry', playHelpText: 'Проверьте логи и попробуйте снова.' });
           }
         } catch (error) {
           console.error('[Launcher IPC] play flow failed', error);
           await logService.error(`[launcher] play flow failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-          get().addToast(error instanceof Error ? error.message : 'Ошибка запуска клиента');
+          get().addToast('Ошибка запуска клиента');
+          set({ playState: 'disabled', bottomStatus: 'Не удалось запустить клиент', playHelpAction: 'retry', playHelpText: 'Проверьте сеть и настройки.' });
         } finally {
           unsubscribe?.();
-          set({ playState: 'idle', launchProgress: 0, bottomStatus: 'Лаунчер готов к запуску' });
+          if (get().playState === 'launching') {
+            set({ playState: 'idle', launchProgress: 0, bottomStatus: 'Лаунчер готов к запуску', playHelpAction: 'none', playHelpText: undefined });
+          }
         }
       },
 

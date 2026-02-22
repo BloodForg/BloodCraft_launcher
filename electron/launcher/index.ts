@@ -71,7 +71,7 @@ async function removeIfExists(targetPath: string): Promise<void> {
 async function downloadToFile(url: string, dest: string, onProgress: (progress: InstallProgress) => void): Promise<void> {
   const response = await fetch(url);
   if (!response.ok || !response.body) {
-    throw new Error(`Failed to download package: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to download package (${url}): ${response.status} ${response.statusText}`);
   }
 
   const total = Number(response.headers.get('content-length') ?? 0);
@@ -120,7 +120,7 @@ async function checkJavaAvailable(): Promise<boolean> {
 export async function fetchDistribution(): Promise<Distribution> {
   const response = await fetch(DISTRIBUTION_URL);
   if (!response.ok) {
-    throw new Error(`Failed to fetch distribution: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch distribution (${DISTRIBUTION_URL}): ${response.status} ${response.statusText}`);
   }
 
   const distribution = (await response.json()) as Distribution;

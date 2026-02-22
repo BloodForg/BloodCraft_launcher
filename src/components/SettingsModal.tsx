@@ -56,7 +56,7 @@ export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenLogsDir, onOpe
             <p className="mb-2 text-xs uppercase text-bc-muted">Сервис</p>
             <div className="grid gap-2">
               <button className="btn-secondary" onClick={onCheckUpdates}>
-                Проверить обновления лаунчера
+                Проверить / Повторить обновления
               </button>
               <button className="btn-secondary" onClick={onOpenLogsDir}>
                 Открыть папку логов

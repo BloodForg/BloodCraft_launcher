@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.3';
 
 function App() {
   const {
@@ -33,6 +33,8 @@ function App() {
     networkMessage,
     setNetworkState,
     bottomStatus,
+    playHelpAction,
+    playHelpText,
     updater,
     setUpdaterState,
     addToast
@@ -55,6 +57,8 @@ function App() {
     networkMessage: s.networkMessage,
     setNetworkState: s.setNetworkState,
     bottomStatus: s.bottomStatus,
+    playHelpAction: s.playHelpAction,
+    playHelpText: s.playHelpText,
     updater: s.updater,
     setUpdaterState: s.setUpdaterState,
     addToast: s.addToast
@@ -93,11 +97,6 @@ function App() {
     return () => unsubscribe();
   }, [token, setUpdaterState]);
 
-  useEffect(() => {
-    if (!token || !networkOnline) return;
-    void updateService.check();
-  }, [token, networkOnline]);
-
   if (!authChecked) {
     return <div className="min-h-screen bg-bc-bg" />;
   }
@@ -115,8 +114,8 @@ function App() {
     !networkOnline || !selectedServer || selectedServer.disabled || selectedServer.status !== 'Online' ? 'disabled' : playState;
 
   return (
-    <div className="min-h-screen bg-bc-bg px-4 py-4 text-bc-text">
-      <div className="mx-auto max-w-[1100px]">
+    <div className="h-screen overflow-hidden bg-bc-bg px-4 py-3 text-bc-text">
+      <div className="mx-auto flex h-full max-w-[1100px] flex-col">
         <header className="panel mb-4 flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
             <img src={logoUrl} alt="BloodCraft" className="h-10 w-10 rounded-lg" />
@@ -125,8 +124,12 @@ function App() {
               <p className="text-xs text-bc-muted">Launcher</p>
             </div>
           </div>
-          <button className="btn-ghost px-3" onClick={() => setSettingsOpen(!settingsOpen)} aria-label="Settings">
-            ⚙
+          <button
+            className="btn-ghost flex h-10 w-10 items-center justify-center p-0 text-[20px]"
+            onClick={() => setSettingsOpen(!settingsOpen)}
+            aria-label="Settings"
+          >
+            <span className="leading-none">⚙</span>
           </button>
         </header>
 
@@ -134,37 +137,14 @@ function App() {
           <div className="panel mb-4 border border-[#E11D2E]/60 bg-[#2A171C] px-4 py-2 text-sm">{networkMessage}</div>
         )}
 
-        {updater.status !== 'idle' && updater.status !== 'not-available' && (
-          <div className="panel mb-4 flex items-center justify-between gap-3 px-4 py-2 text-sm">
-            <span>{updater.message ?? 'Updater status'}</span>
-            {updater.status === 'available' && (
-              <button
-                className="btn-secondary"
-                disabled={!networkOnline}
-                onClick={async () => {
-                  const ok = await updateService.download();
-                  if (!ok) addToast('Не удалось скачать обновление');
-                }}
-              >
-                Скачать
-              </button>
-            )}
-            {updater.status === 'downloaded' && (
-              <button className="btn-primary" onClick={() => void updateService.restart()}>
-                Перезапустить для обновления
-              </button>
-            )}
-          </div>
-        )}
-
-        <section className="panel relative mb-4 overflow-hidden p-5">
+        <section className="panel relative mb-3 overflow-hidden p-4">
           <div className="absolute right-[-100px] top-[-90px] h-52 w-52 rounded-full bg-[#E11D2E]/10 blur-3xl" />
           <h1 className="text-3xl font-black">Добро пожаловать в BloodCraft</h1>
-          <p className="mt-1 text-sm text-bc-muted">Лаунчер готов к подключению API авторизации, лицензии и профилей.</p>
+          <p className="mt-2 block text-sm text-bc-muted">Лаунчер готов к подключению API авторизации, лицензии и профилей.</p>
         </section>
 
-        <div className="grid grid-cols-[280px_1fr] gap-4">
-          <aside className="panel p-3">
+        <div className="grid min-h-0 flex-1 grid-cols-[280px_1fr] gap-4">
+          <aside className="panel min-h-0 overflow-auto p-3">
             <p className="mb-2 text-xs uppercase text-bc-muted">Сервера</p>
             <div className="space-y-2">
               {servers.map((server) => {
@@ -188,7 +168,7 @@ function App() {
             </div>
           </aside>
 
-          <section className="space-y-4">
+          <section className="min-h-0 space-y-4 overflow-auto pr-1">
             <div className="panel p-4">
               <div className="relative h-[210px] overflow-hidden rounded-[18px]">
                 {selectedServer && <img src={selectedServer.bannerUrl} alt={selectedServer.name} className="h-full w-full object-cover" />}
@@ -204,7 +184,7 @@ function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 pb-1">
               <div className="panel p-4">
                 <p className="mb-2 text-xs uppercase text-bc-muted">Профиль</p>
                 <p className="text-lg font-black">{user.username}</p>
@@ -238,16 +218,51 @@ function App() {
           </section>
         </div>
 
-        <footer className="panel mt-4 overflow-hidden p-4">
+        <footer className="panel mt-3 shrink-0 overflow-hidden p-3">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm">{bottomStatus}</p>
-              {updater.status === 'downloading' && typeof updater.progress === 'number' && (
-                <p className="text-xs text-bc-muted">Updater: {updater.progress}%</p>
+              {(updater.status === 'checking' || updater.status === 'downloading' || updater.status === 'downloaded' || updater.status === 'available') && (
+                <p className="text-xs text-bc-muted">
+                  {updater.status === 'checking' && 'Проверка обновлений...'}
+                  {updater.status === 'downloading' && `Загрузка обновления: ${updater.progress ?? 0}%`}
+                  {updater.status === 'available' && 'Доступно обновление'}
+                  {updater.status === 'downloaded' && 'Обновление готово к установке'}
+                </p>
               )}
+              {playHelpText && <p className="text-xs text-bc-muted">{playHelpText}</p>}
             </div>
-            <div className="w-[260px]">
+            <div className="flex w-[340px] items-center justify-end gap-2">
+              {playHelpAction === 'open-site' && (
+                <button className="btn-secondary text-xs" onClick={() => openExternal('https://thebloodcraft.ru')}>
+                  Открыть сайт
+                </button>
+              )}
+              {playHelpAction === 'retry' && (
+                <button className="btn-secondary text-xs" onClick={() => void playSelectedServer()}>
+                  Проверить позже
+                </button>
+              )}
+              {updater.status === 'available' && (
+                <button
+                  className="btn-secondary text-xs"
+                  disabled={!networkOnline}
+                  onClick={async () => {
+                    const ok = await updateService.download();
+                    if (!ok) addToast('Не удалось скачать обновление');
+                  }}
+                >
+                  Скачать обновление
+                </button>
+              )}
+              {updater.status === 'downloaded' && (
+                <button className="btn-secondary text-xs" onClick={() => void updateService.restart()}>
+                  Перезапустить
+                </button>
+              )}
+              <div className="w-[200px]">
               <PlayButton state={effectivePlayState} progress={launchProgress} onClick={() => void playSelectedServer()} />
+              </div>
             </div>
           </div>
           {effectivePlayState === 'launching' && (

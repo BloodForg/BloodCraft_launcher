@@ -94,7 +94,18 @@ const sendUpdaterState = (patch: Partial<typeof updaterState>) => {
   mainWindow?.webContents.send('updater:status', updaterState);
 };
 
+const isUpdater404LatestMac = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return normalized.includes('latest-mac.yml') && normalized.includes('404');
+};
+
 const setupUpdater = () => {
+  if (!app.isPackaged) {
+    log.info('[updater] skipped: app is not packaged');
+    return;
+  }
+
   autoUpdater.logger = log;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
@@ -122,8 +133,13 @@ const setupUpdater = () => {
     sendUpdaterState({ status: 'downloaded', message: `Обновление ${info?.version} скачано` });
   });
   autoUpdater.on('error', (error) => {
+    if (isUpdater404LatestMac(error)) {
+      log.warn('[updater] latest-mac.yml not found (treated as no updates)', error);
+      sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
+      return;
+    }
     log.error('[updater] error', error);
-    sendUpdaterState({ status: 'error', message: error?.message ?? String(error) });
+    sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
   });
 };
 
@@ -172,22 +188,36 @@ app.whenReady().then(() => {
 
   ipcMain.handle('updater:getStatus', async () => updaterState);
   ipcMain.handle('updater:check', async () => {
+    if (!app.isPackaged) {
+      log.info('[updater] manual check skipped in dev');
+      sendUpdaterState({ status: 'idle', message: undefined, progress: 0 });
+      return false;
+    }
     try {
       await autoUpdater.checkForUpdates();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendUpdaterState({ status: 'error', message });
+      if (isUpdater404LatestMac(error)) {
+        log.warn('[updater] latest-mac.yml missing on check, treated as no updates');
+        sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
+        return true;
+      }
+      log.error('[updater] manual check failed', error);
+      sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
       return false;
     }
   });
   ipcMain.handle('updater:download', async () => {
+    if (!app.isPackaged) {
+      log.info('[updater] download skipped in dev');
+      return false;
+    }
     try {
       await autoUpdater.downloadUpdate();
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      sendUpdaterState({ status: 'error', message });
+      log.error('[updater] download failed', error);
+      sendUpdaterState({ status: 'error', message: 'Не удалось скачать обновление' });
       return false;
     }
   });
@@ -254,9 +284,17 @@ app.whenReady().then(() => {
 
   mainWindow = createWindow();
 
-  autoUpdater.checkForUpdates().catch((error) => {
-    log.warn('[updater] startup check failed', error);
-  });
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdates().catch((error) => {
+      if (isUpdater404LatestMac(error)) {
+        log.warn('[updater] startup check: latest-mac.yml not found (treated as no updates)');
+        sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
+        return;
+      }
+      log.warn('[updater] startup check failed', error);
+      sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
