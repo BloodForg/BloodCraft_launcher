@@ -3,9 +3,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promises as fs } from 'node:fs';
 import log from 'electron-log';
-import { autoUpdater } from 'electron-updater';
+import updaterPkg from 'electron-updater';
 import { fetchDistribution, getStatus, install, launch } from './launcher/index.js';
 import type { InstallProgress } from './launcher/types.js';
+
+const { autoUpdater } = updaterPkg as unknown as {
+  autoUpdater: import('electron-updater').AppUpdater;
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
