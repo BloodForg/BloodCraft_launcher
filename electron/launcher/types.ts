@@ -14,9 +14,10 @@ export interface DistributionFile {
 }
 
 export interface Distribution {
-  schema: number;
+  schema?: number;
   instanceId: string;
-  minecraft: {
+  mcVersion?: string;
+  minecraft?: {
     version: string;
     type?: string;
   };
@@ -34,6 +35,9 @@ export interface Distribution {
     port?: number;
   };
   files?: DistributionFile[];
+  zipUrl?: string;
+  zipSha256?: string;
+  zipSize?: number;
   package?: {
     url: string;
     sha256: string;

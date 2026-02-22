@@ -52,6 +52,13 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder --mac --publish always
 
+      - name: Mirror updater file to dist
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp release/latest-mac.yml dist/latest-mac.yml
+
       - name: Verify updater files
         shell: bash
         run: |
@@ -60,4 +67,8 @@ jobs:
           test -n "$(find release -maxdepth 1 -name '*.dmg' | head -n 1)"
           test -n "$(find release -maxdepth 1 -name '*-mac.zip' | head -n 1)"
           test -s release/latest-mac.yml
-          ls -lah release/latest-mac.yml
+          if [ ! -f dist/latest-mac.yml ]; then
+            echo "latest-mac.yml missing"
+            exit 1
+          fi
+          ls -lah release/latest-mac.yml dist/latest-mac.yml

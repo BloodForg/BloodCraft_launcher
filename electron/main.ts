@@ -157,6 +157,7 @@ const setupUpdater = () => {
 app.whenReady().then(() => {
   log.transports.file.level = 'info';
   log.info('[main] app ready');
+  log.info('APP VERSION:', app.getVersion());
   setupUpdater();
   if (isDev) {
     void devSelfCheck();
@@ -358,6 +359,7 @@ app.whenReady().then(() => {
   mainWindow = createWindow();
 
   if (app.isPackaged) {
+    log.info('CHECKING FOR UPDATES');
     autoUpdater.checkForUpdates().catch((error) => {
       if (isUpdater404LatestMac(error)) {
         log.warn('[updater] startup check: latest-mac.yml not found (treated as no updates)');
