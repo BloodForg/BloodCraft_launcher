@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Guard appId / bundleIdentifier
+        run: npm run guard:appid
+
       - name: Build renderer and electron
         run: npm run build
 
