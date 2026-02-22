@@ -181,7 +181,8 @@ function validateDistribution(distribution: Distribution): void {
 
 export async function fetchDistribution(): Promise<Distribution> {
   log.info('[game] fetching manifest', { url: DISTRIBUTION_URL });
-  const response = await fetch(DISTRIBUTION_URL);
+  const response = await fetch(DISTRIBUTION_URL, { redirect: 'follow' });
+  log.info('[game] manifest response', { url: DISTRIBUTION_URL, finalUrl: response.url, status: response.status });
   if (!response.ok) {
     throw new Error(`Failed to fetch distribution (${DISTRIBUTION_URL}): ${response.status} ${response.statusText}`);
   }
@@ -231,10 +232,20 @@ async function installFromZip(distribution: Distribution, onProgress: (progress:
   await removeIfExists(tmpZip);
 
   let downloaded = 0;
+  let lastLoggedPercent = -1;
   await downloadToFile(zipUrl, tmpZip, (chunkBytes) => {
     downloaded += chunkBytes;
     const downloadedMb = (downloaded / (1024 * 1024)).toFixed(1);
     const totalMb = zipSize ? (zipSize / (1024 * 1024)).toFixed(1) : undefined;
+    if (zipSize) {
+      const percent = Math.min(100, Math.round((downloaded / zipSize) * 100));
+      if (percent >= lastLoggedPercent + 10 || percent === 100) {
+        lastLoggedPercent = percent;
+        log.info('[game] zip download progress', { percent, downloaded, total: zipSize });
+      }
+    } else if (downloaded % (25 * 1024 * 1024) < chunkBytes) {
+      log.info('[game] zip download progress', { downloaded });
+    }
     onProgress(
       normalizeProgressMessage('downloading', downloaded, zipSize, zipSize ? `Загрузка... ${downloadedMb}/${totalMb} MB` : `Загрузка... ${downloadedMb} MB`)
     );
@@ -250,6 +261,7 @@ async function installFromZip(distribution: Distribution, onProgress: (progress:
   await removeIfExists(gameDir);
   await ensureDir(gameDir);
   await extract(tmpZip, { dir: gameDir });
+  log.info('[game] unzip complete', { gameDir });
   await removeIfExists(tmpZip);
   return zipSha;
 }
@@ -384,18 +396,63 @@ async function collectJarFiles(dirPath: string): Promise<string[]> {
   return out;
 }
 
-function applyLaunchPlaceholders(raw: string, context: { gameDir: string; assetsRoot: string; assetIndex: string; version: string; serverHost?: string; serverPort?: number }): string {
+function applyLaunchPlaceholders(raw: string, context: { gameDir: string; assetsRoot: string; assetIndex: string; version: string; classPath?: string; serverHost?: string; serverPort?: number }): string {
   const replaceToken = (source: string, token: string, value: string) => source.split(token).join(value);
+  const launcherName = 'BloodCraft';
+  const launcherVersion = app.getVersion();
   return [
+    ['${natives_directory}', path.join(context.gameDir, 'runtime', 'natives', process.platform === 'darwin' ? 'osx-arm64' : process.platform)],
+    ['${library_directory}', path.join(context.gameDir, 'runtime', 'libraries')],
+    ['${classpath_separator}', process.platform === 'win32' ? ';' : ':'],
+    ['${classpath}', context.classPath ?? ''],
     ['${game_directory}', context.gameDir],
     ['${assets_root}', context.assetsRoot],
     ['${assets_index_name}', context.assetIndex],
     ['${version_name}', context.version],
     ['${auth_player_name}', 'BloodPlayer'],
     ['${auth_uuid}', randomUUID()],
+    ['${auth_access_token}', '0'],
+    ['${user_type}', 'legacy'],
+    ['${version_type}', 'release'],
+    ['${launcher_name}', launcherName],
+    ['${launcher_version}', launcherVersion],
+    ['${clientid}', randomUUID()],
+    ['${auth_xuid}', '0'],
+    ['${user_properties}', '{}'],
     ['${server_host}', context.serverHost ?? ''],
     ['${server_port}', context.serverPort ? String(context.serverPort) : '']
   ].reduce((acc, [token, value]) => replaceToken(acc, token, value), raw);
+}
+
+function hasUnresolvedPlaceholder(value: string): boolean {
+  return /\$\{[^}]+\}/.test(value);
+}
+
+function sanitizeLaunchArgs(args: string[]): string[] {
+  const sanitized: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const current = args[i];
+    if (current === '--demo') {
+      continue;
+    }
+    if (hasUnresolvedPlaceholder(current)) {
+      continue;
+    }
+
+    // Skip option + value pair when value still has unresolved placeholder.
+    if (current.startsWith('-') && i + 1 < args.length && hasUnresolvedPlaceholder(args[i + 1])) {
+      i += 1;
+      continue;
+    }
+
+    if (current === '-cp' || current === '-classpath') {
+      i += 1;
+      continue;
+    }
+
+    sanitized.push(current);
+  }
+  return sanitized;
 }
 
 async function launchWithJavaProcess(
@@ -453,27 +510,29 @@ async function launchWithJavaProcess(
   const maxMem = Math.max(minMem, options?.maxMemoryGb ?? 4);
   const assetsRoot = path.join(gameDir, 'assets');
 
-  const jvmArgs = (distribution.launch?.jvmArgs ?? []).map((arg) =>
+  const jvmArgs = sanitizeLaunchArgs((distribution.launch?.jvmArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
       gameDir,
       assetsRoot,
       assetIndex: mcVersion,
       version: mcVersion,
+      classPath,
       serverHost: distribution.server?.host,
       serverPort: distribution.server?.port
     })
-  );
+  ));
 
-  const gameArgs = (distribution.launch?.gameArgs ?? []).map((arg) =>
+  const gameArgs = sanitizeLaunchArgs((distribution.launch?.gameArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
       gameDir,
       assetsRoot,
       assetIndex: mcVersion,
       version: mcVersion,
+      classPath,
       serverHost: distribution.server?.host,
       serverPort: distribution.server?.port
     })
-  );
+  ));
 
   const args = [`-Xmx${maxMem}G`, `-Xms${minMem}G`, ...jvmArgs, '-cp', classPath, mainClass, ...gameArgs];
 
@@ -482,6 +541,16 @@ async function launchWithJavaProcess(
   const logStream = createWriteStream(logPath, { flags: 'a' });
 
   onProgress?.({ stage: 'launching', message: 'Запуск Minecraft...' });
+  log.info('[game] resolved java path', { requestedJavaPath: configuredJava, javaPath });
+  const classPathEntriesCount = classPath.split(process.platform === 'darwin' ? ':' : path.delimiter).filter(Boolean).length;
+  log.info('[game] launching command summary', {
+    javaPath,
+    mainClass,
+    jvmArgsCount: jvmArgs.length,
+    gameArgsCount: gameArgs.length,
+    classPathEntriesCount,
+    cwd: gameDir
+  });
   log.info('[game] launching java', {
     javaPath,
     mainClass,
@@ -507,25 +576,23 @@ async function launchWithJavaProcess(
     const startTimer = setTimeout(() => {
       if (settled) return;
       settled = true;
+      onProgress?.({ stage: 'done', percent: 100, message: 'Minecraft запущен' });
       resolve();
-    }, 1200);
+    }, 10_000);
 
-    child.once('error', (error) => {
+    const settleError = (error: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(startTimer);
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(error);
+    };
+
+    child.once('error', (error) => {
+      settleError(error instanceof Error ? error : new Error(String(error)));
     });
 
     child.once('exit', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(startTimer);
-      if (code && code !== 0) {
-        reject(new Error(`Minecraft завершился с ошибкой (код ${code})`));
-        return;
-      }
-      resolve();
+      settleError(new Error(`Minecraft завершился (код ${code ?? 0})`));
     });
   });
 }

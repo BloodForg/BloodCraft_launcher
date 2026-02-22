@@ -31,7 +31,7 @@ interface LauncherState {
   networkOnline: boolean;
   networkMessage: string;
   bottomStatus: string;
-  playHelpAction: 'none' | 'open-site' | 'retry' | 'open-logs';
+  playHelpAction: 'none' | 'open-site' | 'retry' | 'open-minecraft-log' | 'open-logs-dir';
   playHelpText?: string;
   updater: {
     status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -376,7 +376,7 @@ export const useLauncherStore = create<LauncherState>()(
           set({
             playState: 'disabled',
             bottomStatus: 'Ошибка запуска: IPC недоступен',
-            playHelpAction: 'open-logs',
+            playHelpAction: 'open-logs-dir',
             playHelpText: 'Перезапустите лаунчер. Если проблема повторится, откройте логи.'
           });
           get().addToast('Launcher API недоступен');
@@ -408,11 +408,12 @@ export const useLauncherStore = create<LauncherState>()(
             }
           });
           unsubscribeError = gameService.onError((error) => {
+            const isExitCode = /Minecraft завершился \(код \d+\)/.test(error.message ?? '');
             set({
               playState: 'disabled',
               bottomStatus: error.message || 'Ошибка запуска',
-              playHelpAction: 'open-logs',
-              playHelpText: 'Откройте логи для деталей.'
+              playHelpAction: isExitCode ? 'open-minecraft-log' : 'open-logs-dir',
+              playHelpText: isExitCode ? 'Откройте minecraft-лог для деталей.' : 'Откройте папку логов для деталей.'
             });
           });
           unsubscribeLaunched = gameService.onLaunched(() => {
@@ -421,8 +422,8 @@ export const useLauncherStore = create<LauncherState>()(
               playState: 'idle',
               launchProgress: 100,
               bottomStatus: 'Minecraft запущен',
-              playHelpAction: 'none',
-              playHelpText: undefined
+              playHelpAction: 'open-logs-dir',
+              playHelpText: 'Открыть папку логов'
             });
           });
 
@@ -446,7 +447,7 @@ export const useLauncherStore = create<LauncherState>()(
             set({
               playState: 'disabled',
               bottomStatus: 'Ошибка установки клиента',
-              playHelpAction: 'open-logs',
+              playHelpAction: 'open-logs-dir',
               playHelpText: 'Проверьте логи запуска и повторите попытку.'
             });
             return;
@@ -462,12 +463,14 @@ export const useLauncherStore = create<LauncherState>()(
           if (!launchOk) {
             const failedStatus = await gameService.getStatus().catch(() => null);
             await logService.error(`[launcher] launch failed: ${failedStatus?.lastError ?? 'unknown'}`);
+            const launchMessage = failedStatus?.lastError ?? 'Ошибка запуска клиента';
+            const isExitCode = /Minecraft завершился \(код \d+\)/.test(launchMessage);
             get().addToast('Ошибка запуска клиента');
             set({
               playState: 'disabled',
-              bottomStatus: 'Ошибка запуска клиента',
-              playHelpAction: 'open-logs',
-              playHelpText: 'Откройте логи и проверьте Java/файлы клиента.'
+              bottomStatus: launchMessage,
+              playHelpAction: isExitCode ? 'open-minecraft-log' : 'open-logs-dir',
+              playHelpText: isExitCode ? 'Minecraft завершился. Откройте minecraft-лог.' : 'Откройте папку логов и проверьте Java/файлы клиента.'
             });
           }
         } catch (error) {
@@ -477,8 +480,8 @@ export const useLauncherStore = create<LauncherState>()(
           set({
             playState: 'disabled',
             bottomStatus: 'Ошибка запуска: проверьте настройки',
-            playHelpAction: 'open-logs',
-            playHelpText: 'Откройте логи для деталей.'
+            playHelpAction: 'open-logs-dir',
+            playHelpText: 'Откройте папку логов для деталей.'
           });
         } finally {
           unsubscribe?.();

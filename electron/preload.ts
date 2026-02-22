@@ -39,7 +39,8 @@ contextBridge.exposeInMainWorld('bloodcraft', {
   },
   logs: {
     openDir: (): Promise<string> => ipcRenderer.invoke('logs:openDir'),
-    openLatest: (): Promise<string> => ipcRenderer.invoke('logs:openLatest')
+    openLatest: (): Promise<string> => ipcRenderer.invoke('logs:openLatest'),
+    openLatestMinecraft: (): Promise<string> => ipcRenderer.invoke('logs:openLatestMinecraft')
   },
   updater: {
     getStatus: (): Promise<{

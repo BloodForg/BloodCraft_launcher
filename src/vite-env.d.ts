@@ -83,6 +83,7 @@ declare global {
       logs?: {
         openDir: () => Promise<string>;
         openLatest: () => Promise<string>;
+        openLatestMinecraft: () => Promise<string>;
       };
       updater?: {
         getStatus: () => Promise<UpdaterStatus>;

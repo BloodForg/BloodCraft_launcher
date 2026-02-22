@@ -20,5 +20,9 @@ export const logService = {
   async openLatestLog() {
     if (!window.bloodcraft?.logs) return;
     await window.bloodcraft.logs.openLatest();
+  },
+  async openLatestMinecraftLog() {
+    if (!window.bloodcraft?.logs) return;
+    await window.bloodcraft.logs.openLatestMinecraft();
   }
 };

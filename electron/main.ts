@@ -251,6 +251,24 @@ app.whenReady().then(() => {
     return logPath;
   });
 
+  ipcMain.handle('logs:openLatestMinecraft', async () => {
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    await fs.mkdir(logsDir, { recursive: true });
+    const entries = await fs.readdir(logsDir, { withFileTypes: true });
+    const minecraftLogs = entries
+      .filter((entry) => entry.isFile() && /^minecraft-\d+\.log$/.test(entry.name))
+      .map((entry) => entry.name)
+      .sort((a, b) => Number(b.match(/\d+/)?.[0] ?? 0) - Number(a.match(/\d+/)?.[0] ?? 0));
+    const latest = minecraftLogs[0];
+    if (!latest) {
+      await shell.openPath(logsDir);
+      return logsDir;
+    }
+    const latestPath = path.join(logsDir, latest);
+    await shell.openPath(latestPath);
+    return latestPath;
+  });
+
   ipcMain.handle('updater:getStatus', async () => updaterState);
   ipcMain.handle('updater:check', async () => {
     if (!app.isPackaged) {

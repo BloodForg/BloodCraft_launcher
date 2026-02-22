@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '0.1.8';
+const APP_VERSION = '0.1.9';
 
 function App() {
   const {
@@ -265,14 +265,24 @@ function App() {
                   Проверить позже
                 </button>
               )}
-              {playHelpAction === 'open-logs' && (
+              {playHelpAction === 'open-minecraft-log' && (
                 <button
                   className="btn-secondary text-xs"
                   onClick={() => {
-                    void logService.openLatestLog();
+                    void logService.openLatestMinecraftLog();
                   }}
                 >
-                  Открыть логи
+                  Открыть minecraft-лог
+                </button>
+              )}
+              {playHelpAction === 'open-logs-dir' && (
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    void logService.openLogsDir();
+                  }}
+                >
+                  Открыть папку логов
                 </button>
               )}
               {updater.status === 'available' && (
