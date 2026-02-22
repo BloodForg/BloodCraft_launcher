@@ -1,8 +1,14 @@
 import log from 'electron-log';
 
-const AUTH_BASE_URL = 'https://thebloodcraft.ru';
+export const AUTH_BASE_URL = 'https://thebloodcraft.ru';
+export const AUTH_LOGIN_URL = `${AUTH_BASE_URL}/api/launcher/login`;
+export const AUTH_ME_URL = `${AUTH_BASE_URL}/api/launcher/me`;
+export const AUTH_REFRESH_URL = `${AUTH_BASE_URL}/api/launcher/refresh`;
+export const AUTH_HEALTH_URL = `${AUTH_BASE_URL}/api/launcher/health`;
+const FALLBACK_HEALTH_URL = `${AUTH_BASE_URL}/api/health`;
 const AUTH_SERVICE_NAME = 'BloodCraft Launcher';
 const AUTH_ACCOUNT_REFRESH = 'refreshToken';
+const FETCH_TIMEOUT_MS = 12000;
 
 export interface AuthUser {
   username: string;
@@ -16,8 +22,25 @@ export interface AuthSession {
 }
 
 export interface AuthErrorPayload {
-  code: 'INVALID_CREDENTIALS' | 'NETWORK' | 'UNAUTHORIZED' | 'SERVER' | 'UNKNOWN';
+  code: 'INVALID_CREDENTIALS' | 'NETWORK' | 'API_NOT_FOUND' | 'SERVICE_UNAVAILABLE' | 'INVALID_RESPONSE' | 'UNAUTHORIZED' | 'UNKNOWN';
   message: string;
+  status?: number;
+  url?: string;
+}
+
+export interface NetworkProbe {
+  ok: boolean;
+  status?: number;
+  url: string;
+  finalUrl?: string;
+  message: string;
+}
+
+export interface NetworkDiagnostics {
+  ok: boolean;
+  site: NetworkProbe;
+  launcherApi: NetworkProbe;
+  summary: string;
 }
 
 let accessToken: string | null = null;
@@ -61,10 +84,43 @@ function extractTokens(raw: unknown): { accessToken: string; refreshToken?: stri
   const user = data.user ? normalizeUser(data.user) : undefined;
 
   if (!access) {
-    throw new Error('Auth response does not include access token');
+    throw {
+      code: 'INVALID_RESPONSE',
+      message: 'Некорректный ответ сервера: отсутствует access token'
+    } satisfies AuthErrorPayload;
   }
 
   return { accessToken: access, refreshToken: refresh, user };
+}
+
+function bodyPreview(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
+function classifyNetworkError(error: unknown): AuthErrorPayload {
+  const message = error instanceof Error ? error.message : String(error ?? 'unknown');
+  const causeCode =
+    error && typeof error === 'object' && 'cause' in error && (error as { cause?: { code?: string } }).cause?.code
+      ? String((error as { cause: { code: string } }).cause.code)
+      : '';
+  const raw = `${message} ${causeCode}`.toUpperCase();
+
+  if (
+    raw.includes('ENOTFOUND') ||
+    raw.includes('EAI_AGAIN') ||
+    raw.includes('ECONNREFUSED') ||
+    raw.includes('ETIMEDOUT') ||
+    raw.includes('TIMEOUT') ||
+    raw.includes('ECONNRESET') ||
+    raw.includes('CERT') ||
+    raw.includes('TLS') ||
+    raw.includes('SSL') ||
+    raw.includes('FETCH FAILED')
+  ) {
+    return { code: 'NETWORK', message: 'Нет соединения' };
+  }
+
+  return { code: 'UNKNOWN', message: 'Ошибка авторизации' };
 }
 
 async function getKeytar(): Promise<{
@@ -103,56 +159,159 @@ async function getRefreshToken(): Promise<string | null> {
 
 function authErrorPayload(error: unknown): AuthErrorPayload {
   if (error && typeof error === 'object' && 'code' in error && 'message' in error) {
-    const obj = error as { code: AuthErrorPayload['code']; message: string };
-    return { code: obj.code, message: obj.message };
+    const obj = error as AuthErrorPayload;
+    return {
+      code: obj.code,
+      message: obj.message,
+      status: obj.status,
+      url: obj.url
+    };
   }
-  return {
-    code: 'UNKNOWN',
-    message: error instanceof Error ? error.message : 'Unknown auth error'
-  };
+  return classifyNetworkError(error);
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<Record<string, unknown>> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), FETCH_TIMEOUT_MS);
+
   try {
+    log.info(`[auth] request ${method} ${url}`);
     const response = await fetch(url, {
       ...init,
+      redirect: 'follow',
+      signal: controller.signal,
       headers: {
+        accept: 'application/json',
         'content-type': 'application/json',
         ...(init.headers ?? {})
       }
     });
 
     const text = await response.text();
-    const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    const preview = bodyPreview(text);
+    log.info(`[auth] response ${method} ${url} -> ${response.status} final=${response.url} body="${preview}"`);
+
+    let parsed: Record<string, unknown> = {};
+    if (text) {
+      try {
+        parsed = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        throw {
+          code: 'INVALID_RESPONSE',
+          message: 'Некорректный ответ сервера',
+          status: response.status,
+          url: response.url
+        } satisfies AuthErrorPayload;
+      }
+    }
 
     if (!response.ok) {
-      const message =
+      const backendMessage =
         typeof parsed.message === 'string'
           ? parsed.message
           : typeof parsed.error === 'string'
             ? parsed.error
             : `${response.status} ${response.statusText}`;
-      if (response.status === 401) {
-        throw { code: 'INVALID_CREDENTIALS', message } satisfies AuthErrorPayload;
+
+      if (response.status === 401 || response.status === 403) {
+        throw { code: 'INVALID_CREDENTIALS', message: 'Неверный логин или пароль', status: response.status, url: response.url } satisfies AuthErrorPayload;
       }
+      if (response.status === 404) {
+        throw {
+          code: 'API_NOT_FOUND',
+          message: 'API авторизации не найдено (неверный путь)',
+          status: response.status,
+          url: response.url
+        } satisfies AuthErrorPayload;
+      }
+      if (response.status >= 500) {
+        throw {
+          code: 'SERVICE_UNAVAILABLE',
+          message: 'Сервис временно недоступен',
+          status: response.status,
+          url: response.url
+        } satisfies AuthErrorPayload;
+      }
+
       throw {
-        code: response.status >= 500 ? 'SERVER' : 'UNAUTHORIZED',
-        message
+        code: 'UNAUTHORIZED',
+        message: backendMessage || 'Ошибка авторизации',
+        status: response.status,
+        url: response.url
       } satisfies AuthErrorPayload;
     }
 
     return parsed;
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error) {
+      log.warn(`[auth] error ${method} ${url}`, error);
       throw error;
     }
-    const message = error instanceof Error ? error.message : 'Network error';
-    throw { code: 'NETWORK', message } satisfies AuthErrorPayload;
+
+    const mapped = classifyNetworkError(error);
+    log.warn(`[auth] network/unknown error ${method} ${url}`, { mapped, error: String(error) });
+    throw mapped;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+async function probeUrl(url: string): Promise<NetworkProbe> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), 8000);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: { accept: 'application/json,text/plain,*/*' }
+    });
+    const ok = response.status >= 200 && response.status < 400;
+    const message = ok ? 'OK' : response.status === 404 ? 'API не настроено (404)' : response.status >= 500 ? 'Сервис недоступен (5xx)' : `HTTP ${response.status}`;
+    log.info(`[network] probe ${url} -> ${response.status} final=${response.url}`);
+    return { ok, status: response.status, url, finalUrl: response.url, message };
+  } catch (error) {
+    const mapped = classifyNetworkError(error);
+    log.warn(`[network] probe failed ${url}`, { mapped, error: String(error) });
+    return { ok: false, url, message: mapped.code === 'NETWORK' ? 'Нет соединения' : 'Ошибка сети' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function runNetworkDiagnostics(): Promise<NetworkDiagnostics> {
+  const site = await probeUrl(AUTH_BASE_URL);
+  let launcherApi = await probeUrl(AUTH_HEALTH_URL);
+
+  if (!launcherApi.ok && launcherApi.status === 404) {
+    const fallback = await probeUrl(FALLBACK_HEALTH_URL);
+    if (fallback.ok) {
+      launcherApi = {
+        ...fallback,
+        url: AUTH_HEALTH_URL,
+        message: 'launcher health отсутствует, fallback /api/health доступен'
+      };
+    }
+  }
+
+  const ok = site.ok && launcherApi.ok;
+  const summary = ok
+    ? 'Соединение в порядке'
+    : !site.ok
+      ? site.message
+      : launcherApi.status === 404
+        ? 'API не настроено (404)'
+        : launcherApi.status && launcherApi.status >= 500
+          ? 'Сервис авторизации недоступен'
+          : launcherApi.message;
+
+  log.info('[network] diagnostics summary', { ok, summary, site, launcherApi });
+  return { ok, site, launcherApi, summary };
+}
+
 export async function loginWithSite(login: string, password: string): Promise<AuthSession> {
-  const payload = await fetchJson(`${AUTH_BASE_URL}/api/launcher/login`, {
+  const payload = await fetchJson(AUTH_LOGIN_URL, {
     method: 'POST',
     body: JSON.stringify({ login, password })
   });
@@ -167,7 +326,7 @@ export async function loginWithSite(login: string, password: string): Promise<Au
 }
 
 async function meWithToken(token: string): Promise<AuthUser> {
-  const payload = await fetchJson(`${AUTH_BASE_URL}/api/launcher/me`, {
+  const payload = await fetchJson(AUTH_ME_URL, {
     method: 'GET',
     headers: {
       authorization: `Bearer ${token}`
@@ -178,7 +337,7 @@ async function meWithToken(token: string): Promise<AuthUser> {
 
 export async function me(): Promise<AuthUser> {
   if (!accessToken) {
-    throw { code: 'UNAUTHORIZED', message: 'No access token' } satisfies AuthErrorPayload;
+    throw { code: 'UNAUTHORIZED', message: 'Нет активной сессии' } satisfies AuthErrorPayload;
   }
   return meWithToken(accessToken);
 }
@@ -186,10 +345,10 @@ export async function me(): Promise<AuthUser> {
 export async function refreshSession(): Promise<AuthSession> {
   const refreshToken = await getRefreshToken();
   if (!refreshToken) {
-    throw { code: 'UNAUTHORIZED', message: 'No refresh token' } satisfies AuthErrorPayload;
+    throw { code: 'UNAUTHORIZED', message: 'Нет refresh token' } satisfies AuthErrorPayload;
   }
 
-  const payload = await fetchJson(`${AUTH_BASE_URL}/api/launcher/refresh`, {
+  const payload = await fetchJson(AUTH_REFRESH_URL, {
     method: 'POST',
     body: JSON.stringify({ refreshToken })
   });
@@ -209,10 +368,11 @@ export async function logoutSession(): Promise<void> {
   await setRefreshToken(null);
 }
 
-export function setAccessToken(token: string | null): void {
-  accessToken = token;
-}
-
 export function mapAuthError(error: unknown): AuthErrorPayload {
   return authErrorPayload(error);
+}
+
+export async function devSelfCheck(): Promise<void> {
+  const diagnostics = await runNetworkDiagnostics();
+  log.info('[dev-self-check] auth/network', diagnostics);
 }

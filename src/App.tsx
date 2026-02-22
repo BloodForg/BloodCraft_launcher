@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '0.1.4';
+const APP_VERSION = '0.1.5';
 
 function App() {
   const {
@@ -78,8 +78,11 @@ function App() {
     if (!token) return;
 
     const check = async () => {
-      const online = await networkService.checkOnline();
-      setNetworkState(online, online ? 'Сеть в порядке' : 'Нет соединения с thebloodcraft.ru');
+      const diagnostics = await networkService.checkOnline();
+      setNetworkState(
+        diagnostics.ok || diagnostics.site.ok,
+        diagnostics.summary || (diagnostics.ok ? 'Сеть в порядке' : 'Нет соединения')
+      );
     };
     void check();
     const id = setInterval(() => {
@@ -289,6 +292,15 @@ function App() {
         }}
         onOpenLatestLog={async () => {
           await logService.openLatestLog();
+        }}
+        onDiagnoseConnection={async () => {
+          const diagnostics = await networkService.diagnose();
+          const parts = [
+            `Сайт: ${diagnostics.site.status ?? 'n/a'} (${diagnostics.site.message})`,
+            `API: ${diagnostics.launcherApi.status ?? 'n/a'} (${diagnostics.launcherApi.message})`
+          ];
+          addToast(diagnostics.ok ? 'Соединение в порядке' : diagnostics.summary || 'Проблема соединения');
+          await logService.info(`[network] manual diagnostics: ${parts.join(' | ')}`);
         }}
       />
 

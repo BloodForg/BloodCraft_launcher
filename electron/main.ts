@@ -6,7 +6,7 @@ import log from 'electron-log';
 import updaterPkg from 'electron-updater';
 import { fetchDistribution, getStatus, install, launch } from './launcher/index.js';
 import type { InstallProgress } from './launcher/types.js';
-import { loginWithSite, logoutSession, mapAuthError, me, refreshSession } from './authService.js';
+import { devSelfCheck, loginWithSite, logoutSession, mapAuthError, me, refreshSession, runNetworkDiagnostics } from './authService.js';
 
 const { autoUpdater } = updaterPkg as unknown as {
   autoUpdater: import('electron-updater').AppUpdater;
@@ -148,6 +148,9 @@ app.whenReady().then(() => {
   log.transports.file.level = 'info';
   log.info('[main] app ready');
   setupUpdater();
+  if (isDev) {
+    void devSelfCheck();
+  }
 
   ipcMain.handle('shell:openExternal', async (_event, url: string) => {
     await shell.openExternal(url);
@@ -156,12 +159,21 @@ app.whenReady().then(() => {
 
   ipcMain.handle('network:check', async () => {
     try {
-      const response = await fetch('https://thebloodcraft.ru', { method: 'HEAD' });
-      return response.ok;
+      const diagnostics = await runNetworkDiagnostics();
+      return diagnostics;
     } catch (error) {
       log.warn('[network] health check failed', error);
-      return false;
+      return {
+        ok: false,
+        summary: 'Нет соединения',
+        site: { ok: false, url: 'https://thebloodcraft.ru', message: 'Нет соединения' },
+        launcherApi: { ok: false, url: 'https://thebloodcraft.ru/api/launcher/health', message: 'Нет соединения' }
+      };
     }
+  });
+
+  ipcMain.handle('network:diagnose', async () => {
+    return runNetworkDiagnostics();
   });
 
   ipcMain.handle('auth:login', async (_event, login: string, password: string) => {

@@ -6,9 +6,10 @@ interface Props {
   onCheckUpdates: () => Promise<void>;
   onOpenLogsDir: () => Promise<void>;
   onOpenLatestLog: () => Promise<void>;
+  onDiagnoseConnection: () => Promise<void>;
 }
 
-export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenLogsDir, onOpenLatestLog }: Props) => {
+export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenLogsDir, onOpenLatestLog, onDiagnoseConnection }: Props) => {
   const { settingsOpen, setSettingsOpen } = useLauncherStore((s) => ({
     settingsOpen: s.settingsOpen,
     setSettingsOpen: s.setSettingsOpen
@@ -57,6 +58,9 @@ export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenLogsDir, onOpe
             <div className="grid gap-2">
               <button className="btn-secondary" onClick={onCheckUpdates}>
                 Проверить / Повторить обновления
+              </button>
+              <button className="btn-secondary" onClick={onDiagnoseConnection}>
+                Проверить соединение
               </button>
               <button className="btn-secondary" onClick={onOpenLogsDir}>
                 Открыть папку логов

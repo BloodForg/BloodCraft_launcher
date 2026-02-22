@@ -20,7 +20,18 @@ contextBridge.exposeInMainWorld('bloodcraft', {
     logout: (): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> => ipcRenderer.invoke('auth:logout')
   },
   network: {
-    check: (): Promise<boolean> => ipcRenderer.invoke('network:check')
+    check: (): Promise<{
+      ok: boolean;
+      summary: string;
+      site: { ok: boolean; status?: number; url: string; finalUrl?: string; message: string };
+      launcherApi: { ok: boolean; status?: number; url: string; finalUrl?: string; message: string };
+    }> => ipcRenderer.invoke('network:check'),
+    diagnose: (): Promise<{
+      ok: boolean;
+      summary: string;
+      site: { ok: boolean; status?: number; url: string; finalUrl?: string; message: string };
+      launcherApi: { ok: boolean; status?: number; url: string; finalUrl?: string; message: string };
+    }> => ipcRenderer.invoke('network:diagnose')
   },
   logger: {
     info: (message: string): Promise<boolean> => ipcRenderer.invoke('logger:info', message),

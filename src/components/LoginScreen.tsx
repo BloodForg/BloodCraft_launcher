@@ -4,11 +4,13 @@ import { openExternal } from '../lib/external';
 import { useLauncherStore } from '../store/useLauncherStore';
 
 export const LoginScreen = () => {
-  const { loginForm, setLoginForm, login, authLoading } = useLauncherStore((s) => ({
+  const { loginForm, setLoginForm, login, authLoading, loginErrorCode, loginErrorMessage } = useLauncherStore((s) => ({
     loginForm: s.loginForm,
     setLoginForm: s.setLoginForm,
     login: s.login,
-    authLoading: s.authLoading
+    authLoading: s.authLoading,
+    loginErrorCode: s.loginErrorCode,
+    loginErrorMessage: s.loginErrorMessage
   }));
   const [submitting, setSubmitting] = useState(false);
 
@@ -50,6 +52,16 @@ export const LoginScreen = () => {
             <button className="btn-primary w-full" disabled={authLoading || submitting} onClick={handleSubmit}>
               {authLoading || submitting ? 'Вход...' : 'Войти'}
             </button>
+            {loginErrorMessage && (
+              <div className="rounded-[14px] border border-[#E11D2E]/40 bg-[#2A171C] px-3 py-2 text-xs text-[#E6BFC5]">
+                {loginErrorMessage}
+              </div>
+            )}
+            {loginErrorCode === 'NETWORK' && (
+              <button className="btn-secondary w-full" disabled={authLoading || submitting} onClick={handleSubmit}>
+                Повторить
+              </button>
+            )}
           </div>
 
           <div className="mt-4 flex items-center justify-between text-xs text-bc-muted">

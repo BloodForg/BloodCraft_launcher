@@ -44,6 +44,15 @@ type UpdaterStatus = {
   version?: string;
 };
 
+type NetworkDiagnostics = {
+  ok: boolean;
+  summary: string;
+  site: { ok: boolean; status?: number; url: string; finalUrl?: string; message: string };
+  launcherApi: { ok: boolean; status?: number; url: string; finalUrl?: string; message: string };
+};
+
+type AuthResultErrorCode = 'INVALID_CREDENTIALS' | 'NETWORK' | 'API_NOT_FOUND' | 'SERVICE_UNAVAILABLE' | 'INVALID_RESPONSE' | 'UNAUTHORIZED' | 'UNKNOWN';
+
 declare global {
   interface Window {
     bloodcraft?: {
@@ -54,17 +63,18 @@ declare global {
           password: string
         ) => Promise<
           | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string } } }
-          | { ok: false; error: { code: string; message: string } }
+          | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }
         >;
-        me: () => Promise<{ ok: true; user: { username: string; avatarUrl: string; email: string } } | { ok: false; error: { code: string; message: string } }>;
+        me: () => Promise<{ ok: true; user: { username: string; avatarUrl: string; email: string } } | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }>;
         refresh: () => Promise<
           | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string } } }
-          | { ok: false; error: { code: string; message: string } }
+          | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }
         >;
-        logout: () => Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }>;
+        logout: () => Promise<{ ok: true } | { ok: false; error: { code: AuthResultErrorCode; message: string; status?: number; url?: string } }>;
       };
       network?: {
-        check: () => Promise<boolean>;
+        check: () => Promise<NetworkDiagnostics>;
+        diagnose: () => Promise<NetworkDiagnostics>;
       };
       logger?: {
         info: (message: string) => Promise<boolean>;

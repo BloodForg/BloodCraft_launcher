@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import downloadsMock from '../mocks/downloads.mock.json';
-import { authService } from '../services/authService';
+import { AuthUiError, authService } from '../services/authService';
 import { contentService } from '../services/contentService';
 import { gameService } from '../services/gameService';
 import { logService } from '../services/logService';
@@ -24,6 +24,8 @@ interface LauncherState {
   token: string | null;
   user: User | null;
   authLoading: boolean;
+  loginErrorCode: 'none' | 'NETWORK' | 'INVALID_CREDENTIALS' | 'API_NOT_FOUND' | 'SERVICE_UNAVAILABLE' | 'INVALID_RESPONSE' | 'UNAUTHORIZED' | 'UNKNOWN';
+  loginErrorMessage?: string;
   loginForm: { login: string; password: string };
   settingsOpen: boolean;
   networkOnline: boolean;
@@ -160,6 +162,8 @@ export const useLauncherStore = create<LauncherState>()(
       token: null,
       user: null,
       authLoading: false,
+      loginErrorCode: 'none',
+      loginErrorMessage: undefined,
       loginForm: { login: '', password: '' },
       settingsOpen: false,
       networkOnline: true,
@@ -223,16 +227,18 @@ export const useLauncherStore = create<LauncherState>()(
 
       login: async () => {
         const { login, password } = get().loginForm;
-        set({ authLoading: true });
+        set({ authLoading: true, loginErrorCode: 'none', loginErrorMessage: undefined });
         try {
           const res = await authService.login(login, password);
-          set({ token: res.accessToken, user: res.user, authLoading: false, authChecked: true });
+          set({ token: res.accessToken, user: res.user, authLoading: false, authChecked: true, loginErrorCode: 'none', loginErrorMessage: undefined });
           await logService.info(`[auth] login success for ${res.user.username}`);
           get().addToast(`Вы вошли как ${res.user.username}`);
         } catch (error) {
-          set({ authLoading: false });
-          await logService.error(`[auth] login failed: ${error instanceof Error ? error.message : 'unknown error'}`);
-          get().addToast(error instanceof Error ? error.message : 'Ошибка входа');
+          const message = error instanceof Error ? error.message : 'Ошибка входа';
+          const code = error instanceof AuthUiError ? error.code : 'UNKNOWN';
+          set({ authLoading: false, loginErrorCode: code, loginErrorMessage: message });
+          await logService.error(`[auth] login failed: code=${code} message=${message}`);
+          get().addToast(message);
         }
       },
 
