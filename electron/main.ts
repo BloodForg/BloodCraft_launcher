@@ -295,7 +295,9 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('launcher:install', async () => {
+    log.info('[ipc] launcher:install invoked');
     if (installInProgress) {
+      log.info('[ipc] launcher:install skipped: already in progress');
       return false;
     }
 
@@ -306,9 +308,11 @@ app.whenReady().then(() => {
       await install((progress: InstallProgress) => {
         emitProgress(progress);
       });
+      log.info('[ipc] launcher:install completed');
       return true;
     } catch (error) {
       lastLauncherError = error instanceof Error ? error.message : 'Unknown launcher:install error';
+      log.error('[ipc] launcher:install failed', { error: lastLauncherError });
       emitProgress({ stage: 'error', message: lastLauncherError });
       return false;
     } finally {
@@ -317,11 +321,14 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('launcher:launch', async (_event, options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number }) => {
+    log.info('[ipc] launcher:launch invoked', options ?? {});
     try {
       await launch((progress: InstallProgress) => emitProgress(progress), options);
+      log.info('[ipc] launcher:launch completed');
       return true;
     } catch (error) {
       lastLauncherError = error instanceof Error ? error.message : 'Unknown launcher:launch error';
+      log.error('[ipc] launcher:launch failed', { error: lastLauncherError });
       emitProgress({ stage: 'error', message: lastLauncherError });
       return false;
     }

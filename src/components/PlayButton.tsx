@@ -14,10 +14,10 @@ export const PlayButton = ({
   return (
     <button
       onClick={onClick}
-      disabled={disabled}
+      aria-disabled={disabled}
       className={clsx('relative h-[62px] w-full overflow-hidden rounded-[20px] border text-base font-bold transition-all duration-200 ease-premium active:scale-[0.98]', {
         'border-bc-accent bg-bc-accent text-white shadow-accent hover:brightness-110': state !== 'disabled',
-        'cursor-not-allowed border-white/10 bg-[#3A3F47] text-white/70': disabled
+        'border-white/10 bg-[#3A3F47] text-white/70 hover:brightness-100': disabled
       })}
     >
       {state === 'idle' && 'Играть'}

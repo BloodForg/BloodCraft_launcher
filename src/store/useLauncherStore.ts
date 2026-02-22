@@ -31,7 +31,7 @@ interface LauncherState {
   networkOnline: boolean;
   networkMessage: string;
   bottomStatus: string;
-  playHelpAction: 'none' | 'open-site' | 'retry';
+  playHelpAction: 'none' | 'open-site' | 'retry' | 'open-logs';
   playHelpText?: string;
   updater: {
     status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -321,14 +321,59 @@ export const useLauncherStore = create<LauncherState>()(
       playSelectedServer: async () => {
         const s = get();
         const server = s.servers.find((x) => x.id === s.selectedServerId);
+        await logService.info(
+          `[store] play called offline=${String(!s.networkOnline)} selectedServerId=${s.selectedServerId ?? 'none'} playState=${s.playState} launchProgress=${s.launchProgress}`
+        );
 
-        if (!s.networkOnline) {
-          set({ playState: 'disabled', bottomStatus: 'Нет соединения', playHelpAction: 'retry', playHelpText: 'Проверьте сеть и попробуйте снова.' });
+        set({ bottomStatus: 'Подготовка запуска...', playHelpAction: 'none', playHelpText: undefined });
+
+        if (s.playState === 'launching') {
+          set({
+            playState: 'launching',
+            bottomStatus: 'Установка уже идёт...',
+            playHelpAction: 'none',
+            playHelpText: 'Дождитесь завершения текущей операции.'
+          });
+          await logService.info('[store] play blocked: installation already in progress');
           return;
         }
 
-        if (!server || server.status !== 'Online' || server.disabled) {
-          set({ playState: 'disabled', playHelpAction: 'none', playHelpText: undefined });
+        if (!s.networkOnline) {
+          set({ playState: 'disabled', bottomStatus: 'Нет соединения', playHelpAction: 'retry', playHelpText: 'Проверьте сеть и попробуйте снова.' });
+          await logService.info('[store] play blocked: offline');
+          return;
+        }
+
+        if (!server) {
+          set({
+            playState: 'disabled',
+            bottomStatus: 'Выберите сервер',
+            playHelpAction: 'none',
+            playHelpText: 'Сначала выберите сервер для запуска.'
+          });
+          await logService.info('[store] play blocked: no server selected');
+          return;
+        }
+
+        if (server.disabled) {
+          set({
+            playState: 'disabled',
+            bottomStatus: 'Сервер в разработке',
+            playHelpAction: 'none',
+            playHelpText: 'Этот сервер пока недоступен. Статус: Скоро.'
+          });
+          await logService.info(`[store] play blocked: server disabled (${server.id})`);
+          return;
+        }
+
+        if (server.status !== 'Online') {
+          set({
+            playState: 'disabled',
+            bottomStatus: server.status === 'Maintenance' ? 'Сервер на технических работах' : 'Сервер недоступен',
+            playHelpAction: 'none',
+            playHelpText: 'Выберите другой сервер или попробуйте позже.'
+          });
+          await logService.info(`[store] play blocked: server status ${server.status} (${server.id})`);
           return;
         }
 
@@ -370,7 +415,7 @@ export const useLauncherStore = create<LauncherState>()(
               await logService.error(`[launcher] install failed with 404: ${rawError}`);
               set({
                 playState: 'disabled',
-                bottomStatus: 'Файлы клиента недоступны',
+                bottomStatus: 'Клиент пока не опубликован',
                 playHelpAction: 'open-site',
                 playHelpText: 'Клиент пока не опубликован. Проверьте позже.'
               });
@@ -378,7 +423,12 @@ export const useLauncherStore = create<LauncherState>()(
               return;
             }
             get().addToast(rawError ? 'Не удалось установить клиент' : 'Ошибка установки клиента');
-            set({ playState: 'disabled', bottomStatus: 'Не удалось установить клиент', playHelpAction: 'retry', playHelpText: 'Попробуйте снова чуть позже.' });
+            set({
+              playState: 'disabled',
+              bottomStatus: 'Ошибка установки клиента',
+              playHelpAction: 'open-logs',
+              playHelpText: 'Проверьте логи запуска и повторите попытку.'
+            });
             return;
           }
 
@@ -393,13 +443,23 @@ export const useLauncherStore = create<LauncherState>()(
             const failedStatus = await gameService.getStatus().catch(() => null);
             await logService.error(`[launcher] launch failed: ${failedStatus?.lastError ?? 'unknown'}`);
             get().addToast('Ошибка запуска клиента');
-            set({ playState: 'disabled', bottomStatus: 'Не удалось запустить клиент', playHelpAction: 'retry', playHelpText: 'Проверьте логи и попробуйте снова.' });
+            set({
+              playState: 'disabled',
+              bottomStatus: 'Ошибка запуска клиента',
+              playHelpAction: 'open-logs',
+              playHelpText: 'Откройте логи и проверьте Java/файлы клиента.'
+            });
           }
         } catch (error) {
           console.error('[Launcher IPC] play flow failed', error);
           await logService.error(`[launcher] play flow failed: ${error instanceof Error ? error.message : 'unknown error'}`);
           get().addToast('Ошибка запуска клиента');
-          set({ playState: 'disabled', bottomStatus: 'Не удалось запустить клиент', playHelpAction: 'retry', playHelpText: 'Проверьте сеть и настройки.' });
+          set({
+            playState: 'disabled',
+            bottomStatus: 'Ошибка запуска: проверьте настройки',
+            playHelpAction: 'open-logs',
+            playHelpText: 'Откройте логи для деталей.'
+          });
         } finally {
           unsubscribe?.();
           if (get().playState === 'launching') {

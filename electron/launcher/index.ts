@@ -201,6 +201,7 @@ function validateDistribution(distribution: Distribution): void {
 }
 
 export async function fetchDistribution(): Promise<Distribution> {
+  log.info('[game] fetching manifest', { url: DISTRIBUTION_URL });
   const response = await fetch(DISTRIBUTION_URL);
   if (!response.ok) {
     throw new Error(`Failed to fetch distribution (${DISTRIBUTION_URL}): ${response.status} ${response.statusText}`);
@@ -208,6 +209,12 @@ export async function fetchDistribution(): Promise<Distribution> {
 
   const distribution = (await response.json()) as Distribution;
   validateDistribution(distribution);
+  log.info('[game] manifest loaded', {
+    instanceId: distribution.instanceId,
+    mcVersion: distribution.minecraft.version,
+    files: distribution.files?.length ?? 0,
+    hasPackage: Boolean(distribution.package?.url)
+  });
   return distribution;
 }
 
@@ -342,6 +349,11 @@ async function installFromFiles(distribution: Distribution, onProgress: (progres
 
 export async function install(onProgress: (progress: InstallProgress) => void): Promise<void> {
   const distribution = await fetchDistribution();
+  log.info('[game] install start', {
+    manifestUrl: DISTRIBUTION_URL,
+    instanceId: distribution.instanceId,
+    mcVersion: distribution.minecraft.version
+  });
   const instanceDir = getInstanceDir();
   const metaPath = getMetaPath();
   const currentMeta = await readJsonSafe<InstallMeta>(metaPath);
@@ -351,6 +363,7 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
   onProgress({ stage: 'verifying', message: 'Проверка текущей установки...' });
 
   if (targetHash && currentMeta?.installedSha256 === targetHash) {
+    log.info('[game] install skipped: already up to date', { instanceId: distribution.instanceId });
     onProgress({ stage: 'done', percent: 100, message: 'Клиент уже актуален' });
     return;
   }
@@ -366,6 +379,7 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
 
   onProgress({ stage: 'verifying', message: 'Сохранение метаданных установки...' });
   await writeJsonAtomic(metaPath, meta);
+  log.info('[game] install complete', { instanceId: distribution.instanceId, installedSha256 });
   onProgress({ stage: 'done', percent: 100, message: 'Установка завершена' });
 }
 
@@ -584,6 +598,12 @@ export async function launch(
   options?: LaunchOptions
 ): Promise<void> {
   const distribution = await fetchDistribution();
+  log.info('[game] play start', {
+    manifestUrl: DISTRIBUTION_URL,
+    instanceId: distribution.instanceId,
+    mcVersion: distribution.minecraft.version,
+    javaPath: options?.javaPath ?? 'auto'
+  });
   const meta = await readJsonSafe<InstallMeta>(getMetaPath());
   const targetHash = distribution.files?.length ? computeManifestHash(distribution) : distribution.package?.sha256;
 

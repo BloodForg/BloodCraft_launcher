@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '0.1.5';
+const APP_VERSION = '0.1.6';
 
 function App() {
   const {
@@ -65,6 +65,12 @@ function App() {
   }));
   const selectedServer = useLauncherStore(selectSelectedServer);
 
+  const handlePlayClick = () => {
+    console.log('[ui] play click');
+    void logService.info('[ui] play click');
+    void playSelectedServer();
+  };
+
   useEffect(() => {
     void initSession();
   }, [initSession]);
@@ -116,6 +122,18 @@ function App() {
 
   const effectivePlayState =
     !networkOnline || !selectedServer || selectedServer.disabled || selectedServer.status !== 'Online' ? 'disabled' : playState;
+  const disabledReason = !networkOnline
+    ? 'Нет соединения'
+    : !selectedServer
+      ? 'Выберите сервер'
+      : selectedServer.disabled
+        ? 'Сервер в разработке'
+        : selectedServer.status !== 'Online'
+          ? selectedServer.status === 'Maintenance'
+            ? 'Сервер на технических работах'
+            : 'Сервер недоступен'
+          : undefined;
+  const effectiveHelpText = playHelpText ?? disabledReason;
 
   return (
     <div className="h-screen overflow-hidden bg-bc-bg px-4 py-3 text-bc-text">
@@ -234,7 +252,7 @@ function App() {
                   {updater.status === 'downloaded' && 'Обновление готово к установке'}
                 </p>
               )}
-              {playHelpText && <p className="text-xs text-bc-muted">{playHelpText}</p>}
+              {effectiveHelpText && <p className="text-xs text-bc-muted">{effectiveHelpText}</p>}
             </div>
             <div className="flex w-[340px] items-center justify-end gap-2">
               {playHelpAction === 'open-site' && (
@@ -243,8 +261,18 @@ function App() {
                 </button>
               )}
               {playHelpAction === 'retry' && (
-                <button className="btn-secondary text-xs" onClick={() => void playSelectedServer()}>
+                <button className="btn-secondary text-xs" onClick={handlePlayClick}>
                   Проверить позже
+                </button>
+              )}
+              {playHelpAction === 'open-logs' && (
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    void logService.openLatestLog();
+                  }}
+                >
+                  Открыть логи
                 </button>
               )}
               {updater.status === 'available' && (
@@ -265,7 +293,7 @@ function App() {
                 </button>
               )}
               <div className="w-[200px]">
-              <PlayButton state={effectivePlayState} progress={launchProgress} onClick={() => void playSelectedServer()} />
+              <PlayButton state={effectivePlayState} progress={launchProgress} onClick={handlePlayClick} />
               </div>
             </div>
           </div>
