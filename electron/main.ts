@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { promises as fs } from 'node:fs';
 import log from 'electron-log';
@@ -21,6 +22,7 @@ let lastLauncherError: string | undefined;
 let installInProgress = false;
 let isQuitting = false;
 let updateDownloaded = false;
+let restartFallbackTimer: NodeJS.Timeout | null = null;
 let updaterState: {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
   message?: string;
@@ -104,6 +106,57 @@ function createWindow() {
   });
 
   return win;
+}
+
+function getShipItLogPaths(): string[] {
+  const home = os.homedir();
+  const appId = 'ru.thebloodcraft.launcher';
+  return [
+    path.join(home, 'Library', 'Application Support', `${appId}.ShipIt`, 'ShipIt_stderr.log'),
+    path.join(home, 'Library', 'Caches', `${appId}.ShipIt`, 'ShipIt_stderr.log')
+  ];
+}
+
+function getShipItFolderCandidates(): string[] {
+  const home = os.homedir();
+  const appId = 'ru.thebloodcraft.launcher';
+  return [path.join(home, 'Library', 'Application Support', `${appId}.ShipIt`), path.join(home, 'Library', 'Caches', `${appId}.ShipIt`)];
+}
+
+async function tailLines(filePath: string, maxLines = 300): Promise<string> {
+  const content = await fs.readFile(filePath, 'utf8');
+  const lines = content.split(/\r?\n/);
+  return lines.slice(Math.max(0, lines.length - maxLines)).join('\n');
+}
+
+async function readShipItLogs(): Promise<string> {
+  const parts: string[] = [];
+  for (const filePath of getShipItLogPaths()) {
+    try {
+      const tail = await tailLines(filePath, 300);
+      if (tail.trim()) {
+        parts.push(`=== ${filePath} ===\n${tail}`);
+      }
+    } catch {
+      // missing log file is normal
+    }
+  }
+  return parts.join('\n\n');
+}
+
+async function openShipItFolder(): Promise<string> {
+  for (const folder of getShipItFolderCandidates()) {
+    try {
+      await fs.access(folder);
+      await shell.openPath(folder);
+      return folder;
+    } catch {
+      // keep checking
+    }
+  }
+  const fallback = getShipItFolderCandidates()[0];
+  await shell.openPath(path.dirname(fallback));
+  return fallback;
 }
 
 const sendUpdaterState = (patch: Partial<typeof updaterState>) => {
@@ -316,8 +369,21 @@ app.whenReady().then(() => {
       return false;
     }
   });
+  ipcMain.handle('updater:shipitLogs', async () => {
+    const logs = await readShipItLogs();
+    log.info('[updater] shipit logs requested', { hasLogs: Boolean(logs.trim()) });
+    return logs;
+  });
+  ipcMain.handle('updater:openUpdateFolder', async () => {
+    const openedPath = await openShipItFolder();
+    log.info('[updater] open update folder', { openedPath });
+    return openedPath;
+  });
   ipcMain.handle('updater:restart', async () => {
-    log.info('[updater] restart requested');
+    log.info('[updater] restart requested', {
+      appVersion: app.getVersion(),
+      execPath: process.execPath
+    });
     if (!updateDownloaded) {
       log.warn('[updater] restart denied: update is not downloaded');
       return { ok: false, reason: 'not-downloaded' as const };
@@ -325,14 +391,31 @@ app.whenReady().then(() => {
 
     isQuitting = true;
     app.removeAllListeners('window-all-closed');
+    if (restartFallbackTimer) {
+      clearTimeout(restartFallbackTimer);
+      restartFallbackTimer = null;
+    }
 
     setImmediate(() => {
       log.info('[updater] calling quitAndInstall');
       autoUpdater.quitAndInstall(true, true);
-      setTimeout(() => {
-        log.warn('[updater] quitAndInstall fallback: app.quit()');
-        app.quit();
-      }, 2000);
+      restartFallbackTimer = setTimeout(async () => {
+        if (isQuitting) {
+          // app is still alive after expected quit, updater apply likely failed.
+          const shipItLogs = await readShipItLogs();
+          sendUpdaterState({
+            status: 'error',
+            message: 'Обновление скачано, но macOS не смог применить его.'
+          });
+          if (shipItLogs.trim()) {
+            mainWindow?.webContents.send('updater:shipit-log', shipItLogs);
+          }
+          log.error('[updater] apply failed: app still running after quitAndInstall', {
+            appVersion: app.getVersion(),
+            execPath: process.execPath
+          });
+        }
+      }, 8000);
     });
 
     return { ok: true };

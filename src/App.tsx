@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.1.0';
 
 function App() {
   const {
@@ -111,6 +111,16 @@ function App() {
     void updateService.check();
     return () => unsubscribe();
   }, [token, setUpdaterState]);
+
+  useEffect(() => {
+    if (!token) return;
+    const unsubscribe = updateService.onShipItLog((text) => {
+      const preview = text.trim().split(/\r?\n/).slice(-10).join('\n');
+      void logService.error(`[updater] ShipIt log tail:\n${preview || '(empty)'}`);
+      addToast('Показан лог обновления (ShipIt).');
+    });
+    return () => unsubscribe();
+  }, [token, addToast]);
 
   useEffect(() => {
     return () => {
@@ -329,23 +339,33 @@ function App() {
                     restartTimerRef.current = window.setTimeout(() => {
                       setRestarting(false);
                       setRestartFailed(true);
-                      setBottomStatus('Перезапуск не удался — откройте приложение заново');
-                      addToast('Перезапуск не удался — откройте приложение заново');
-                    }, 5000);
+                      setBottomStatus('Обновление скачано, но macOS не смог применить его.');
+                      addToast('Обновление скачано, но macOS не смог применить его.');
+                    }, 8000);
                   }}
                 >
                   {restarting ? 'Перезапуск...' : 'Перезапустить'}
                 </button>
               )}
               {restartFailed && (
-                <button
-                  className="btn-secondary text-xs"
-                  onClick={() => {
-                    void window.bloodcraft?.app?.quit();
-                  }}
-                >
-                  Выйти
-                </button>
+                <>
+                  <button
+                    className="btn-secondary text-xs"
+                    onClick={() => {
+                      void updateService.openUpdateFolder();
+                    }}
+                  >
+                    Открыть папку обновления
+                  </button>
+                  <button
+                    className="btn-secondary text-xs"
+                    onClick={() => {
+                      void window.bloodcraft?.app?.quit();
+                    }}
+                  >
+                    Выйти
+                  </button>
+                </>
               )}
               <div className="w-[200px]">
               <PlayButton state={effectivePlayState} progress={launchProgress} onClick={handlePlayClick} />
@@ -369,6 +389,19 @@ function App() {
           }
           const ok = await updateService.check();
           if (!ok) addToast('Не удалось проверить обновления');
+        }}
+        onShowShipItLog={async () => {
+          const logs = await updateService.shipitLogs();
+          const preview = logs.trim().split(/\r?\n/).slice(-20).join('\n');
+          if (!preview) {
+            addToast('Лог обновления пока пуст');
+            return;
+          }
+          addToast('Лог обновления записан в launcher.log');
+          await logService.info(`[updater] ShipIt log tail:\n${preview}`);
+        }}
+        onOpenUpdateFolder={async () => {
+          await updateService.openUpdateFolder();
         }}
         onOpenLogsDir={async () => {
           await logService.openLogsDir();

@@ -1,6 +1,6 @@
 {
   "name": "bloodcraft-launcher",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -12,6 +12,7 @@
     "dist:mac": "npm run icons:generate && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
     "dist:win": "npm run icons:generate && npm run build && electron-builder --win nsis --publish never",
     "guard:appid": "node scripts/guard-appid.mjs",
+    "verify:mac-zip": "node scripts/verify-mac-zip.mjs",
     "preview": "vite preview",
     "lint": "eslint ."
   },

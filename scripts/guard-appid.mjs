@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 
 const REQUIRED_APP_ID = 'ru.thebloodcraft.launcher';
-const ERROR_TEXT = 'DO NOT CHANGE appId/bundleIdentifier: it will break macOS auto-update.';
+const ERROR_TEXT = 'DO NOT CHANGE appId/bundleIdentifier';
 
 function fail(message) {
   console.error(message);

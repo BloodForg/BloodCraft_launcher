@@ -29,8 +29,10 @@ interface LaunchOptions {
   uuid?: string;
 }
 
+const TARGET_MC_VERSION = '1.21.11';
+
 function getMcVersion(distribution: Distribution): string {
-  return distribution.mcVersion ?? distribution.minecraft?.version ?? '1.21.11';
+  return distribution.mcVersion ?? distribution.minecraft?.version ?? TARGET_MC_VERSION;
 }
 
 export function getInstanceDir(): string {
@@ -178,6 +180,24 @@ function validateDistribution(distribution: Distribution): void {
   const hasPackage = Boolean(distribution.package?.url && distribution.package?.sha256);
   if (!schemaOk || !versionOk || !instanceOk || (!hasFiles && !hasZip && !hasPackage)) {
     throw new Error('Invalid distribution manifest format');
+  }
+}
+
+function validateManifestForInstall(distribution: Distribution): void {
+  const mcVersion = getMcVersion(distribution);
+  if (mcVersion !== TARGET_MC_VERSION) {
+    throw new Error(`Manifest validation failed: mcVersion must be ${TARGET_MC_VERSION}, got ${mcVersion}`);
+  }
+  if (!distribution.instanceId) {
+    throw new Error('Manifest validation failed: instanceId is required');
+  }
+  const zipUrl = distribution.zipUrl ?? distribution.package?.url;
+  const zipSha256 = distribution.zipSha256 ?? distribution.package?.sha256;
+  if (!zipUrl) {
+    throw new Error('Manifest validation failed: zipUrl is required');
+  }
+  if (!zipSha256) {
+    throw new Error('Manifest validation failed: zipSha256 is required');
   }
 }
 
@@ -331,6 +351,7 @@ async function installFromFiles(distribution: Distribution, onProgress: (progres
 
 export async function install(onProgress: (progress: InstallProgress) => void): Promise<void> {
   const distribution = await fetchDistribution();
+  validateManifestForInstall(distribution);
   const mcVersion = getMcVersion(distribution);
 
   log.info('[game] install start', {
@@ -539,7 +560,8 @@ async function launchWithJavaProcess(
   const mcVersion = getMcVersion(distribution);
   const minMem = Math.max(1, options?.minMemoryGb ?? 2);
   const maxMem = Math.max(minMem, options?.maxMemoryGb ?? 4);
-  const assetsRoot = path.join(gameDir, 'assets');
+  const assetsRoot = path.join(gameDir, 'runtime', 'assets');
+  const launcherGameDir = path.join(getInstanceDir(), 'game');
   const assetIndexName = await resolveAssetIndexName(gameDir, mcVersion);
   const username = options?.username?.trim() || 'BloodPlayer';
   const uuid = options?.uuid?.trim() || '00000000-0000-0000-0000-000000000000';
@@ -573,16 +595,16 @@ async function launchWithJavaProcess(
   ));
 
   ensureArgPair(gameArgs, '--accessToken', '0');
-  ensureArgPair(gameArgs, '--version', mcVersion);
+  ensureArgPair(gameArgs, '--version', TARGET_MC_VERSION);
   ensureArgPair(gameArgs, '--versionType', 'release');
   ensureArgPair(gameArgs, '--userType', 'legacy');
   ensureArgPair(gameArgs, '--uuid', uuid);
   ensureArgPair(gameArgs, '--username', username);
-  ensureArgPair(gameArgs, '--gameDir', gameDir);
+  ensureArgPair(gameArgs, '--gameDir', launcherGameDir);
   ensureArgPair(gameArgs, '--assetsDir', assetsRoot);
   ensureArgPair(gameArgs, '--assetIndex', assetIndexName);
 
-  log.info('[game] final args check', {
+  log.info('[game] final args validation complete', {
     hasAccessToken: hasArg(gameArgs, '--accessToken'),
     hasVersion: hasArg(gameArgs, '--version'),
     hasUsername: hasArg(gameArgs, '--username'),

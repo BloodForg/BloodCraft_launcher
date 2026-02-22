@@ -22,8 +22,20 @@ export const updateService = {
     if (!window.bloodcraft?.updater) return { ok: false };
     return window.bloodcraft.updater.restart();
   },
+  shipitLogs: async (): Promise<string> => {
+    if (!window.bloodcraft?.updater) return '';
+    return window.bloodcraft.updater.shipitLogs();
+  },
+  openUpdateFolder: async (): Promise<string> => {
+    if (!window.bloodcraft?.updater) return '';
+    return window.bloodcraft.updater.openUpdateFolder();
+  },
   onStatus: (cb: (status: UpdaterStatus) => void) => {
     if (!window.bloodcraft?.updater) return () => undefined;
     return window.bloodcraft.updater.onStatus(cb);
+  },
+  onShipItLog: (cb: (text: string) => void) => {
+    if (!window.bloodcraft?.updater?.onShipItLog) return () => undefined;
+    return window.bloodcraft.updater.onShipItLog(cb);
   }
 };

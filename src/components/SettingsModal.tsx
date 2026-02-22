@@ -4,12 +4,14 @@ import { useSettingsStore } from '../store/useSettingsStore';
 interface Props {
   appVersion: string;
   onCheckUpdates: () => Promise<void>;
+  onShowShipItLog: () => Promise<void>;
+  onOpenUpdateFolder: () => Promise<void>;
   onOpenLogsDir: () => Promise<void>;
   onOpenLatestLog: () => Promise<void>;
   onDiagnoseConnection: () => Promise<void>;
 }
 
-export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenLogsDir, onOpenLatestLog, onDiagnoseConnection }: Props) => {
+export const SettingsModal = ({ appVersion, onCheckUpdates, onShowShipItLog, onOpenUpdateFolder, onOpenLogsDir, onOpenLatestLog, onDiagnoseConnection }: Props) => {
   const { settingsOpen, setSettingsOpen } = useLauncherStore((s) => ({
     settingsOpen: s.settingsOpen,
     setSettingsOpen: s.setSettingsOpen
@@ -54,10 +56,16 @@ export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenLogsDir, onOpe
             <input className="field" value={javaPath} onChange={(e) => setJavaPath(e.target.value)} placeholder="/path/to/java" />
           </div>
           <div className="rounded-[18px] border border-white/10 bg-bc-cardSoft p-3">
-            <p className="mb-2 text-xs uppercase text-bc-muted">Сервис</p>
+            <p className="mb-2 text-xs uppercase text-bc-muted">Updates & Сервис</p>
             <div className="grid gap-2">
               <button className="btn-secondary" onClick={onCheckUpdates}>
                 Проверить / Повторить обновления
+              </button>
+              <button className="btn-secondary" onClick={onShowShipItLog}>
+                Показать лог обновления
+              </button>
+              <button className="btn-secondary" onClick={onOpenUpdateFolder}>
+                Открыть папку обновления
               </button>
               <button className="btn-secondary" onClick={onDiagnoseConnection}>
                 Проверить соединение

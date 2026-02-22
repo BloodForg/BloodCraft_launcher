@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('bloodcraft', {
     check: (): Promise<boolean> => ipcRenderer.invoke('updater:check'),
     download: (): Promise<boolean> => ipcRenderer.invoke('updater:download'),
     restart: (): Promise<{ ok: boolean; reason?: 'not-downloaded' }> => ipcRenderer.invoke('updater:restart'),
+    shipitLogs: (): Promise<string> => ipcRenderer.invoke('updater:shipitLogs'),
+    openUpdateFolder: (): Promise<string> => ipcRenderer.invoke('updater:openUpdateFolder'),
     onStatus: (
       cb: (status: {
         status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -67,6 +69,11 @@ contextBridge.exposeInMainWorld('bloodcraft', {
         cb(status);
       ipcRenderer.on('updater:status', handler);
       return () => ipcRenderer.removeListener('updater:status', handler);
+    },
+    onShipItLog: (cb: (text: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, text: string) => cb(text);
+      ipcRenderer.on('updater:shipit-log', handler);
+      return () => ipcRenderer.removeListener('updater:shipit-log', handler);
     }
   },
   launcher: {

@@ -25,14 +25,28 @@ jobs:
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
             echo "ref=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
             echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ steps.ref.outputs.tag }}" in
+            v*) ;;
+            *)
+              echo "Release tag must start with v*"
+              exit 1
+              ;;
+          esac
 
       - name: Setup Node.js (LTS)
         uses: actions/setup-node@v4
@@ -49,11 +63,10 @@ jobs:
       - name: Build renderer and electron
         run: npm run build
 
-      - name: Build and publish macOS artifacts
+      - name: Build macOS artifacts
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac --publish always
+        run: npx electron-builder --mac --publish never
 
       - name: Mirror updater file to dist
         shell: bash
@@ -75,3 +88,21 @@ jobs:
             exit 1
           fi
           ls -lah release/latest-mac.yml dist/latest-mac.yml
+
+      - name: Verify mac zip structure (Squirrel.Mac)
+        run: npm run verify:mac-zip
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ref.outputs.tag }}
+          name: ${{ steps.ref.outputs.tag }}
+          draft: false
+          prerelease: false
+          files: |
+            release/*.dmg
+            release/*-mac.zip
+            release/*.blockmap
+            release/latest-mac.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
