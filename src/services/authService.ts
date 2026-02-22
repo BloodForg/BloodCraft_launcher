@@ -1,36 +1,62 @@
 import type { AuthResponse, User } from '../types';
-import userMock from '../mocks/user.mock.json';
 
-const MOCK_TOKEN = 'mock_bloodcraft_token_2026';
-
-const delay = (ms = 350) => new Promise((r) => setTimeout(r, ms));
+const friendlyMessage = (code?: string, fallback?: string): string => {
+  if (code === 'INVALID_CREDENTIALS' || code === 'UNAUTHORIZED') return 'Неверный логин или пароль';
+  if (code === 'NETWORK') return 'Нет соединения';
+  return fallback || 'Ошибка авторизации';
+};
 
 export const authService = {
   async login(login: string, password: string): Promise<AuthResponse> {
-    await delay();
     if (!login || !password) {
       throw new Error('Введите логин и пароль');
     }
+    if (!window.bloodcraft?.auth) {
+      throw new Error('API авторизации недоступен');
+    }
+
+    const result = await window.bloodcraft.auth.login(login, password);
+    if (!result.ok) {
+      throw new Error(friendlyMessage(result.error.code, result.error.message));
+    }
 
     return {
-      token: MOCK_TOKEN,
-      user: {
-        ...userMock,
-        username: login.includes('@') ? userMock.username : login
-      }
-    } as AuthResponse;
+      accessToken: result.session.accessToken,
+      user: result.session.user
+    };
+  },
+
+  async refresh(): Promise<AuthResponse> {
+    if (!window.bloodcraft?.auth) {
+      throw new Error('API авторизации недоступен');
+    }
+
+    const result = await window.bloodcraft.auth.refresh();
+    if (!result.ok) {
+      throw new Error(friendlyMessage(result.error.code, result.error.message));
+    }
+
+    return {
+      accessToken: result.session.accessToken,
+      user: result.session.user
+    };
   },
 
   async logout(): Promise<void> {
-    await delay(180);
+    if (!window.bloodcraft?.auth) return;
+    await window.bloodcraft.auth.logout();
   },
 
   async me(): Promise<User> {
-    await delay(200);
-    return userMock as User;
+    if (!window.bloodcraft?.auth) {
+      throw new Error('API авторизации недоступен');
+    }
+
+    const result = await window.bloodcraft.auth.me();
+    if (!result.ok) {
+      throw new Error(friendlyMessage(result.error.code, result.error.message));
+    }
+
+    return result.user;
   }
 };
-
-// Future API endpoints:
-// POST /api/auth/login
-// GET /api/auth/me

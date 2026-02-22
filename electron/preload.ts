@@ -3,6 +3,22 @@ import type { Distribution, InstallProgress, LauncherStatus } from './launcher/t
 
 contextBridge.exposeInMainWorld('bloodcraft', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  auth: {
+    login: (
+      login: string,
+      password: string
+    ): Promise<
+      | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string } } }
+      | { ok: false; error: { code: string; message: string } }
+    > => ipcRenderer.invoke('auth:login', login, password),
+    me: (): Promise<{ ok: true; user: { username: string; avatarUrl: string; email: string } } | { ok: false; error: { code: string; message: string } }> =>
+      ipcRenderer.invoke('auth:me'),
+    refresh: (): Promise<
+      | { ok: true; session: { accessToken: string; user: { username: string; avatarUrl: string; email: string } } }
+      | { ok: false; error: { code: string; message: string } }
+    > => ipcRenderer.invoke('auth:refresh'),
+    logout: (): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }> => ipcRenderer.invoke('auth:logout')
+  },
   network: {
     check: (): Promise<boolean> => ipcRenderer.invoke('network:check')
   },
@@ -42,7 +58,7 @@ contextBridge.exposeInMainWorld('bloodcraft', {
     getStatus: (): Promise<LauncherStatus> => ipcRenderer.invoke('launcher:getStatus'),
     getDistribution: (): Promise<Distribution | null> => ipcRenderer.invoke('launcher:getDistribution'),
     install: (): Promise<boolean> => ipcRenderer.invoke('launcher:install'),
-    launch: (): Promise<boolean> => ipcRenderer.invoke('launcher:launch'),
+    launch: (options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number }): Promise<boolean> => ipcRenderer.invoke('launcher:launch', options),
     onProgress: (cb: (progress: InstallProgress) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, progress: InstallProgress) => cb(progress);
       ipcRenderer.on('launcher:progress', handler);

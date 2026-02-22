@@ -6,6 +6,7 @@ import log from 'electron-log';
 import updaterPkg from 'electron-updater';
 import { fetchDistribution, getStatus, install, launch } from './launcher/index.js';
 import type { InstallProgress } from './launcher/types.js';
+import { loginWithSite, logoutSession, mapAuthError, me, refreshSession } from './authService.js';
 
 const { autoUpdater } = updaterPkg as unknown as {
   autoUpdater: import('electron-updater').AppUpdater;
@@ -155,11 +156,52 @@ app.whenReady().then(() => {
 
   ipcMain.handle('network:check', async () => {
     try {
-      const response = await fetch('https://thebloodcraft.ru', { method: 'GET' });
+      const response = await fetch('https://thebloodcraft.ru', { method: 'HEAD' });
       return response.ok;
     } catch (error) {
       log.warn('[network] health check failed', error);
       return false;
+    }
+  });
+
+  ipcMain.handle('auth:login', async (_event, login: string, password: string) => {
+    try {
+      return { ok: true, session: await loginWithSite(login, password) };
+    } catch (error) {
+      const mapped = mapAuthError(error);
+      log.warn('[auth] login failed', mapped);
+      return { ok: false, error: mapped };
+    }
+  });
+
+  ipcMain.handle('auth:me', async () => {
+    try {
+      return { ok: true, user: await me() };
+    } catch (error) {
+      const mapped = mapAuthError(error);
+      log.warn('[auth] me failed', mapped);
+      return { ok: false, error: mapped };
+    }
+  });
+
+  ipcMain.handle('auth:refresh', async () => {
+    try {
+      return { ok: true, session: await refreshSession() };
+    } catch (error) {
+      const mapped = mapAuthError(error);
+      log.warn('[auth] refresh failed', mapped);
+      return { ok: false, error: mapped };
+    }
+  });
+
+  ipcMain.handle('auth:logout', async () => {
+    try {
+      await logoutSession();
+      return { ok: true };
+    } catch (error) {
+      const mapped = mapAuthError(error);
+      log.warn('[auth] logout failed', mapped);
+      return { ok: false, error: mapped };
     }
   });
 
@@ -262,9 +304,9 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('launcher:launch', async () => {
+  ipcMain.handle('launcher:launch', async (_event, options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number }) => {
     try {
-      await launch((progress: InstallProgress) => emitProgress(progress));
+      await launch((progress: InstallProgress) => emitProgress(progress), options);
       return true;
     } catch (error) {
       lastLauncherError = error instanceof Error ? error.message : 'Unknown launcher:launch error';

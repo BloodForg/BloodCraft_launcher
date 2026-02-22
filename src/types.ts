@@ -48,7 +48,7 @@ export interface DownloadTask {
 }
 
 export interface AuthResponse {
-  token: string;
+  accessToken: string;
   user: User;
 }
 

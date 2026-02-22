@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '0.1.3';
+const APP_VERSION = '0.1.4';
 
 function App() {
   const {
@@ -94,6 +94,7 @@ function App() {
       setUpdaterState(status);
     });
     void updateService.getStatus().then((status) => setUpdaterState(status));
+    void updateService.check();
     return () => unsubscribe();
   }, [token, setUpdaterState]);
 

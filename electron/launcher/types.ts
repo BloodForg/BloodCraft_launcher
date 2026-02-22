@@ -1,9 +1,16 @@
 export interface InstallProgress {
-  stage: 'idle' | 'downloading' | 'extracting' | 'verifying' | 'done' | 'error';
+  stage: 'idle' | 'downloading' | 'extracting' | 'verifying' | 'launching' | 'done' | 'error';
   percent?: number;
   message?: string;
   currentBytes?: number;
   totalBytes?: number;
+}
+
+export interface DistributionFile {
+  url: string;
+  path: string;
+  sha256: string;
+  size?: number;
 }
 
 export interface Distribution {
@@ -15,8 +22,19 @@ export interface Distribution {
   };
   java?: {
     required?: boolean;
+    minVersion?: number;
   };
-  package: {
+  launch?: {
+    mainClass?: string;
+    jvmArgs?: string[];
+    gameArgs?: string[];
+  };
+  server?: {
+    host?: string;
+    port?: number;
+  };
+  files?: DistributionFile[];
+  package?: {
     url: string;
     sha256: string;
     size?: number;

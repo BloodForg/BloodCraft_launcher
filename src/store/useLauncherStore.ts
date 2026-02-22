@@ -8,6 +8,7 @@ import { logService } from '../services/logService';
 import { serverService } from '../services/serverService';
 import { statusService } from '../services/statusService';
 import { TARGET_MINECRAFT_VERSION } from '../config/version';
+import { useSettingsStore } from './useSettingsStore';
 import type { DownloadTask, GameProfile, NewsItem, PromoItem, ServerItem, TabKey, User } from '../types';
 
 interface Toast {
@@ -210,15 +211,11 @@ export const useLauncherStore = create<LauncherState>()(
       setBottomStatus: (value) => set({ bottomStatus: value }),
       setUpdaterState: (value) => set({ updater: value }),
       initSession: async () => {
-        const token = get().token;
-        if (!token) {
-          set({ authChecked: true, user: null });
-          return;
-        }
         try {
-          const me = await authService.me();
-          set({ user: me, authChecked: true });
-        } catch {
+          const refreshed = await authService.refresh();
+          set({ token: refreshed.accessToken, user: refreshed.user, authChecked: true });
+        } catch (error) {
+          await logService.info(`[auth] session refresh skipped: ${error instanceof Error ? error.message : 'unknown'}`);
           set({ token: null, user: null, authChecked: true });
         }
       },
@@ -229,7 +226,7 @@ export const useLauncherStore = create<LauncherState>()(
         set({ authLoading: true });
         try {
           const res = await authService.login(login, password);
-          set({ token: res.token, user: res.user, authLoading: false, authChecked: true });
+          set({ token: res.accessToken, user: res.user, authLoading: false, authChecked: true });
           await logService.info(`[auth] login success for ${res.user.username}`);
           get().addToast(`Вы вошли как ${res.user.username}`);
         } catch (error) {
@@ -251,9 +248,13 @@ export const useLauncherStore = create<LauncherState>()(
           await get().logout();
           return;
         }
-        const me = await authService.me();
-        set({ token: 'simulated_token', user: me });
-        get().addToast('Simulate login: успешно');
+        try {
+          const refreshed = await authService.refresh();
+          set({ token: refreshed.accessToken, user: refreshed.user });
+          get().addToast('Simulate login: использован refresh token');
+        } catch {
+          get().addToast('Simulate login недоступен без активной сессии');
+        }
       },
 
       loadContent: async () => {
@@ -376,7 +377,12 @@ export const useLauncherStore = create<LauncherState>()(
           }
 
           set({ bottomStatus: 'Запуск Minecraft...' });
-          const launchOk = await gameService.launch();
+          const settings = useSettingsStore.getState();
+          const launchOk = await gameService.launch({
+            javaPath: settings.javaMode === 'custom' ? settings.javaPath : undefined,
+            minMemoryGb: Math.max(2, Math.floor(settings.ramGb / 2)),
+            maxMemoryGb: settings.ramGb
+          });
           if (!launchOk) {
             const failedStatus = await gameService.getStatus().catch(() => null);
             await logService.error(`[launcher] launch failed: ${failedStatus?.lastError ?? 'unknown'}`);
@@ -430,9 +436,18 @@ export const useLauncherStore = create<LauncherState>()(
     }),
     {
       name: 'bloodcraft-launcher-state',
+      version: 2,
+      migrate: (persistedState: unknown) => {
+        const state = (persistedState as Partial<LauncherState>) ?? {};
+        return {
+          ...state,
+          token: null,
+          user: null
+        };
+      },
       partialize: (s) => ({
-        token: s.token,
-        user: s.user,
+        token: null,
+        user: null,
         settings: s.settings,
         selectedProfileId: s.selectedProfileId
       })
