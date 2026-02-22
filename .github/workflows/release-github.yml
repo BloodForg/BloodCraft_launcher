@@ -49,14 +49,15 @@ jobs:
       - name: Build and publish macOS artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac dmg --publish always
+        run: npx electron-builder --mac --publish always
 
       - name: Verify updater files
         shell: bash
         run: |
           set -euo pipefail
-          test -s release/BloodCraft.dmg
+          ls -lah release
+          test -n "$(find release -maxdepth 1 -name '*.dmg' | head -n 1)"
+          test -n "$(find release -maxdepth 1 -name '*-mac.zip' | head -n 1)"
           test -s release/latest-mac.yml
-          ls -lah release/BloodCraft.dmg release/latest-mac.yml
+          ls -lah release/latest-mac.yml

@@ -34,6 +34,12 @@ function flushProgress(force = false) {
   if (!mainWindow || !queuedProgress) return;
   if (!force && Date.now() - lastProgressAt < PROGRESS_THROTTLE_MS) return;
   mainWindow.webContents.send('launcher:progress', queuedProgress);
+  mainWindow.webContents.send('game:progress', queuedProgress);
+  const statusMessage = queuedProgress.message ?? queuedProgress.stage;
+  mainWindow.webContents.send('game:status', { stage: queuedProgress.stage, message: statusMessage, percent: queuedProgress.percent });
+  if (queuedProgress.stage === 'error') {
+    mainWindow.webContents.send('game:error', { code: 'GAME_ERROR', message: statusMessage });
+  }
   queuedProgress = null;
   lastProgressAt = Date.now();
 }
@@ -111,19 +117,22 @@ const setupUpdater = () => {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
 
+  log.info('[updater] app version', app.getVersion());
+
   autoUpdater.on('checking-for-update', () => {
-    log.info('[updater] checking for update');
+    log.info('[updater] checking-for-update');
     sendUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
   });
   autoUpdater.on('update-available', (info) => {
-    log.info('[updater] update available', info?.version);
+    log.info('[updater] update-available', { version: info?.version, files: info?.files?.map((f) => f.url) });
     sendUpdaterState({ status: 'available', version: info?.version, message: `Доступно обновление ${info?.version}` });
   });
-  autoUpdater.on('update-not-available', () => {
-    log.info('[updater] no updates');
+  autoUpdater.on('update-not-available', (info) => {
+    log.info('[updater] update-not-available', { version: info?.version });
     sendUpdaterState({ status: 'not-available', message: 'Обновлений нет', progress: 0 });
   });
   autoUpdater.on('download-progress', (progressObj) => {
+    log.info('[updater] download-progress', { percent: progressObj.percent, transferred: progressObj.transferred, total: progressObj.total });
     sendUpdaterState({
       status: 'downloading',
       progress: Math.round(progressObj.percent),
@@ -131,6 +140,7 @@ const setupUpdater = () => {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    log.info('[updater] update-downloaded', { version: info?.version });
     sendUpdaterState({ status: 'downloaded', message: `Обновление ${info?.version} скачано` });
   });
   autoUpdater.on('error', (error) => {
@@ -139,7 +149,7 @@ const setupUpdater = () => {
       sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
       return;
     }
-    log.error('[updater] error', error);
+    log.error('[updater] error', { message: error instanceof Error ? error.message : String(error) });
     sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
   });
 };
@@ -324,12 +334,14 @@ app.whenReady().then(() => {
     log.info('[ipc] launcher:launch invoked', options ?? {});
     try {
       await launch((progress: InstallProgress) => emitProgress(progress), options);
+      mainWindow?.webContents.send('game:launched', { ok: true, message: 'Minecraft process started' });
       log.info('[ipc] launcher:launch completed');
       return true;
     } catch (error) {
       lastLauncherError = error instanceof Error ? error.message : 'Unknown launcher:launch error';
       log.error('[ipc] launcher:launch failed', { error: lastLauncherError });
       emitProgress({ stage: 'error', message: lastLauncherError });
+      mainWindow?.webContents.send('game:error', { code: 'LAUNCH_FAILED', message: lastLauncherError });
       return false;
     }
   });

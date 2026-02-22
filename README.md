@@ -26,8 +26,10 @@ npm run build
 ```bash
 npm run dist:mac
 ```
-Output file:
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/release/BloodCraft.dmg`
+Output files:
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/release/BloodCraft-<version>-arm64.dmg`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/release/BloodCraft-<version>-arm64-mac.zip`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/release/latest-mac.yml`
 
 ## Auto-update release flow (GitHub Releases)
 Updater reads release channel from GitHub Releases (`BloodForg/BloodCraft_launcher`) and expects `latest-mac.yml`.
@@ -41,7 +43,8 @@ git tag vX.Y.Z
 git push origin main --tags
 ```
 4. Workflow `/Users/bloodforg/Documents/launc/bloodcraft-launcher/.github/workflows/release-github.yml` builds macOS and publishes:
-- `BloodCraft.dmg`
+- `BloodCraft-<version>-arm64.dmg`
+- `BloodCraft-<version>-arm64-mac.zip`
 - `latest-mac.yml`
 
 Installed launcher flow:

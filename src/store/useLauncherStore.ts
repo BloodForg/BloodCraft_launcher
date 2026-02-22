@@ -140,20 +140,6 @@ const profiles: GameProfile[] = [
 
 let toastId = 0;
 
-const runLegacyMockLaunch = (setState: (patch: Partial<LauncherState>) => void, getState: () => LauncherState) => {
-  const timer = setInterval(() => {
-    const state = getState();
-    const value = Math.min(100, state.launchProgress + 11);
-    setState({ launchProgress: value });
-
-    if (value >= 100) {
-      clearInterval(timer);
-      setState({ playState: 'idle', launchProgress: 0 });
-      getState().addToast('Запуск клиента (UI-заглушка)');
-    }
-  }, 180);
-};
-
 export const useLauncherStore = create<LauncherState>()(
   persist(
     (set, get) => ({
@@ -379,15 +365,26 @@ export const useLauncherStore = create<LauncherState>()(
 
         set({ playState: 'launching', launchProgress: 0, bottomStatus: 'Подготовка к запуску...', playHelpAction: 'none', playHelpText: undefined });
         let unsubscribe: (() => void) | undefined;
+        let unsubscribeStatus: (() => void) | undefined;
+        let unsubscribeError: (() => void) | undefined;
+        let unsubscribeLaunched: (() => void) | undefined;
+        let launchSucceeded = false;
 
         if (!window.bloodcraft?.launcher) {
           console.error('[Launcher IPC] window.bloodcraft.launcher is unavailable');
-          get().addToast('Launcher API недоступен, использован mock режим');
-          runLegacyMockLaunch(set, get);
+          await logService.error('[launcher] API unavailable in renderer');
+          set({
+            playState: 'disabled',
+            bottomStatus: 'Ошибка запуска: IPC недоступен',
+            playHelpAction: 'open-logs',
+            playHelpText: 'Перезапустите лаунчер. Если проблема повторится, откройте логи.'
+          });
+          get().addToast('Launcher API недоступен');
           return;
         }
 
         try {
+          set({ bottomStatus: 'Проверка файлов...' });
           const status = await gameService.getStatus();
           console.log('[Launcher status]', status);
           await logService.info(`[launcher] status: ${JSON.stringify(status)}`);
@@ -404,6 +401,29 @@ export const useLauncherStore = create<LauncherState>()(
             if (progress.stage === 'done') set({ launchProgress: 100, bottomStatus: 'Установка завершена' });
             if (progress.stage === 'error') set({ bottomStatus: message || 'Ошибка установки' });
             void logService.info(`[launcher] progress ${progress.stage} ${percent}% ${message}`);
+          });
+          unsubscribeStatus = gameService.onStatus((status) => {
+            if (status.message) {
+              set({ bottomStatus: status.message });
+            }
+          });
+          unsubscribeError = gameService.onError((error) => {
+            set({
+              playState: 'disabled',
+              bottomStatus: error.message || 'Ошибка запуска',
+              playHelpAction: 'open-logs',
+              playHelpText: 'Откройте логи для деталей.'
+            });
+          });
+          unsubscribeLaunched = gameService.onLaunched(() => {
+            launchSucceeded = true;
+            set({
+              playState: 'idle',
+              launchProgress: 100,
+              bottomStatus: 'Minecraft запущен',
+              playHelpAction: 'none',
+              playHelpText: undefined
+            });
           });
 
           const installOk = await gameService.install();
@@ -462,7 +482,10 @@ export const useLauncherStore = create<LauncherState>()(
           });
         } finally {
           unsubscribe?.();
-          if (get().playState === 'launching') {
+          unsubscribeStatus?.();
+          unsubscribeError?.();
+          unsubscribeLaunched?.();
+          if (!launchSucceeded && get().playState === 'launching') {
             set({ playState: 'idle', launchProgress: 0, bottomStatus: 'Лаунчер готов к запуску', playHelpAction: 'none', playHelpText: undefined });
           }
         }

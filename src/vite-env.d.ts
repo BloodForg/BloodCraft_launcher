@@ -97,6 +97,9 @@ declare global {
         install: () => Promise<boolean>;
         launch: (options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number }) => Promise<boolean>;
         onProgress: (cb: (progress: InstallProgress) => void) => () => void;
+        onGameStatus: (cb: (status: { stage: string; message: string; percent?: number }) => void) => () => void;
+        onGameError: (cb: (error: { code: string; message: string }) => void) => () => void;
+        onGameLaunched: (cb: (payload: { ok: boolean; message: string }) => void) => () => void;
       };
     };
   }

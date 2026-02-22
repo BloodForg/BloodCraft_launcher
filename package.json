@@ -1,6 +1,6 @@
 {
   "name": "bloodcraft-launcher",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -9,7 +9,7 @@
     "icons:generate": "node scripts/generate-icons.mjs && icon-gen -i build/icon.png -o build --icns --report",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json && tsc -p electron/tsconfig.preload.json",
     "pack": "npm run build && electron-builder --dir",
-    "dist:mac": "npm run icons:generate && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg --publish never",
+    "dist:mac": "npm run icons:generate && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never",
     "dist:win": "npm run icons:generate && npm run build && electron-builder --win nsis --publish never",
     "preview": "vite preview",
     "lint": "eslint ."
@@ -45,7 +45,7 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.bloodcraft.launcher",
+    "appId": "ru.thebloodcraft.launcher",
     "productName": "BloodCraft",
     "asar": true,
     "directories": {
@@ -67,10 +67,10 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "zip"
       ],
       "icon": "build/app.icns",
-      "artifactName": "BloodCraft.dmg",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "identity": null

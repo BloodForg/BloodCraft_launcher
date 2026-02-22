@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -441,21 +441,47 @@ async function launchWithJavaProcess(
 ): Promise<void> {
   const mainClass = distribution.launch?.mainClass;
   if (!mainClass) {
-    throw new Error('Manifest launch.mainClass is not defined');
+    throw new Error('Сборка клиента повреждена или не опубликована');
   }
 
-  const javaCmd = options?.javaPath && options.javaPath.trim().length > 0 ? options.javaPath : 'java';
+  const userJavaPath = options?.javaPath?.trim();
+  const autoJavaPath = '/usr/bin/java';
+  let javaCmd = userJavaPath && userJavaPath.length > 0 ? userJavaPath : autoJavaPath;
+
+  if (userJavaPath && !existsSync(userJavaPath)) {
+    log.warn('[game] configured java path not found, trying fallback', { userJavaPath, fallback: autoJavaPath });
+    javaCmd = autoJavaPath;
+  }
+
+  if (!existsSync(javaCmd) && javaCmd !== 'java') {
+    throw new Error('Java не найдена. Укажите путь в настройках.');
+  }
+
   const javaOk = await checkJavaAvailable(javaCmd);
   if (!javaOk) {
-    throw new Error('Java не найдена. Укажите путь к Java в настройках.');
+    const fallbackOk = javaCmd !== autoJavaPath ? await checkJavaAvailable(autoJavaPath) : false;
+    if (fallbackOk) {
+      javaCmd = autoJavaPath;
+    } else {
+      throw new Error('Java не найдена. Укажите путь в настройках.');
+    }
   }
 
   const jarFiles = await collectJarFiles(gameDir);
   if (!jarFiles.length) {
-    throw new Error('В установленной сборке не найдены .jar файлы для запуска');
+    throw new Error('Сборка клиента повреждена или не опубликована');
+  }
+  for (const jarPath of jarFiles) {
+    if (!existsSync(jarPath)) {
+      throw new Error('Сборка клиента повреждена или не опубликована');
+    }
   }
 
-  const classPath = jarFiles.join(path.delimiter);
+  const classPathDelimiter = process.platform === 'darwin' ? ':' : path.delimiter;
+  const classPath = jarFiles.join(classPathDelimiter);
+  if (!classPath.trim()) {
+    throw new Error('Сборка клиента повреждена или не опубликована');
+  }
   const minMem = Math.max(1, options?.minMemoryGb ?? 2);
   const maxMem = Math.max(minMem, options?.maxMemoryGb ?? 4);
   const assetsRoot = path.join(gameDir, 'assets');
@@ -494,6 +520,14 @@ async function launchWithJavaProcess(
     cwd: gameDir,
     stdio: ['ignore', 'pipe', 'pipe']
   });
+  log.info('[game] launching java', {
+    javaPath: javaCmd,
+    mainClass,
+    argsLength: args.length,
+    cwd: gameDir,
+    instanceDir: getInstanceDir(),
+    logPath
+  });
 
   child.stdout.on('data', (data: Buffer) => {
     const line = data.toString('utf8');
@@ -508,9 +542,35 @@ async function launchWithJavaProcess(
   child.once('error', (error) => {
     log.error('[mc] process error', error);
   });
+  child.once('exit', (code) => {
+    log.info('[mc] process exit', { code, logPath });
+  });
 
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 400);
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const startedTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    }, 1200);
+
+    child.once('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(startedTimer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    });
+
+    child.once('exit', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(startedTimer);
+      if (code && code !== 0) {
+        reject(new Error(`Minecraft завершился с ошибкой (код ${code})`));
+        return;
+      }
+      resolve();
+    });
   });
 }
 

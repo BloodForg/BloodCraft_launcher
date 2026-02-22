@@ -74,6 +74,21 @@ contextBridge.exposeInMainWorld('bloodcraft', {
       const handler = (_event: Electron.IpcRendererEvent, progress: InstallProgress) => cb(progress);
       ipcRenderer.on('launcher:progress', handler);
       return () => ipcRenderer.removeListener('launcher:progress', handler);
+    },
+    onGameStatus: (cb: (status: { stage: string; message: string; percent?: number }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: { stage: string; message: string; percent?: number }) => cb(status);
+      ipcRenderer.on('game:status', handler);
+      return () => ipcRenderer.removeListener('game:status', handler);
+    },
+    onGameError: (cb: (error: { code: string; message: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, error: { code: string; message: string }) => cb(error);
+      ipcRenderer.on('game:error', handler);
+      return () => ipcRenderer.removeListener('game:error', handler);
+    },
+    onGameLaunched: (cb: (payload: { ok: boolean; message: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { ok: boolean; message: string }) => cb(payload);
+      ipcRenderer.on('game:launched', handler);
+      return () => ipcRenderer.removeListener('game:launched', handler);
     }
   }
 });
