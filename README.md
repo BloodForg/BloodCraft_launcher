@@ -1,91 +1,63 @@
-# BloodCraft Launcher (UI Template)
+# BloodCraft Launcher
 
-Desktop UI-template in BloodCraft visual style.
+Electron + React launcher UI in BloodCraft style with login flow, server selection, install/launch pipeline, updater, network state, and logs.
 
 ## Stack
-- Electron + React + TypeScript + Vite
-- TailwindCSS
-- Zustand (state)
-- Framer Motion (animations)
+- Electron + Vite + React + TypeScript
+- Zustand
+- Framer Motion
+- `minecraft-launcher-core`
+- `electron-updater`
+- `electron-log`
 
 ## Run
-1. `cd /Users/bloodforg/Documents/launc/bloodcraft-launcher`
-2. `npm install`
-3. `npm run dev`
+```bash
+cd /Users/bloodforg/Documents/launc/bloodcraft-launcher
+npm install
+npm run dev
+```
 
-Build:
-- `npm run build`
+## Build
+```bash
+npm run build
+```
 
-## Release (Local)
-1. `npm ci`
-2. `npm run dist:mac`
-3. Result file: `release/BloodCraft.dmg`
-4. `npm run dist:win`
-5. Result file: `release/BloodCraft.exe`
+## DMG build
+```bash
+npm run dist:mac
+```
+Output:
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/release/BloodCraft.dmg`
 
-## Release
-- Create release tag:
-  - `git tag v0.1.0`
-  - `git push --tags`
-- GitHub Actions workflows build artifacts and upload them to VDS:
-  - `.github/workflows/build-mac-upload-vds.yml`
-  - `.github/workflows/build-win-upload-vds.yml`
-
-## Download macOS
-- `http://46.181.94.25/download`
-- Direct file: `http://46.181.94.25/downloads/BloodCraft.dmg`
-- Windows file: `http://46.181.94.25/downloads/BloodCraft.exe`
-- Artifacts are built in GitHub Actions and uploaded to VDS.
-
-## GitHub Secrets (required)
-- `VDS_HOST` (example: `46.181.94.25`)
-- `VDS_USER` (example: `ruslan`)
-- `VDS_SSH_KEY` (private SSH key for CI, no passphrase)
-- `VDS_PORT` (example: `22`)
-- `VDS_PATH` (example: `/var/www/bloodcraft-downloads`)
-
-Target Minecraft version: Vanilla+ 1.21.11
-
-## Where to edit mock data
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/servers.mock.json`
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/news.mock.json`
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/promos.mock.json`
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/user.mock.json`
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/mocks/downloads.mock.json`
-
-## Service stubs (for future API)
+## Key modules
 - `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/authService.ts`
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/contentService.ts`
-- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/statusService.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/updateService.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/networkService.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/serverService.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/gameService.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/services/logService.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/store/useSettingsStore.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/electron/main.ts`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/electron/preload.ts`
 
-Target endpoints already documented in files:
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-- `GET /api/servers`
-- `GET /api/news`
-- `GET /api/banners`
-- `GET /api/status/servers`
+## Icons
+Source logo:
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/src/assets/bloodcraft-logo.svg`
 
-## Project structure
-- `electron/` - electron main/preload
-- `src/components/` - UI blocks (top bar, sidebar, right panel, buttons, toasts)
-- `src/pages/` - tabs: Home, Servers, Downloads, Profile, Settings
-- `src/store/useLauncherStore.ts` - global state + states + localStorage token
-- `src/services/` - API-ready mock services
-- `src/mocks/` - static datasets
+Generate app icons:
+```bash
+npm run icons:generate
+```
+Generated:
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/build/icon.png`
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/build/app.icns`
 
-## Implemented states
-- Auth: loggedOut/loggedIn + simulate login
-- Play button: idle/launching/disabled
-- Promo/dynamic banners: auto-cycle each 5s + dots + crossfade
-- Downloads: queue / empty state + mock controls
-- Settings: save + toast
-- Logs / Repair: UI-ready stubs
+## Auto update
+Configured through `electron-updater` in:
+- `/Users/bloodforg/Documents/launc/bloodcraft-launcher/electron/main.ts`
 
-## Not implemented by design
-- Real Minecraft launch
-- Real file downloading
-- Real auth
-- Real system dialogs
+Publisher target:
+- GitHub releases (`BloodForg/BloodCraft_launcher`)
 
-Final macOS installer file name: BloodCraft.dmg
+## Download URL
+- [http://thebloodcraft.ru/downloads/BloodCraft.dmg](http://thebloodcraft.ru/downloads/BloodCraft.dmg)

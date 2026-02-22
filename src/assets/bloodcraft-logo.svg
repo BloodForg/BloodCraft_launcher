@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="BloodCraft Minecraft-style block logo v3 flat">
+  <!-- Flat pixel-cube icon (good for small sizes) -->
+  <g>
+    <!-- top -->
+    <polygon points="128,36 200,76 128,116 56,76" fill="#d94a57"/>
+    <!-- left -->
+    <polygon points="56,76 128,116 128,212 56,172" fill="#b01c29"/>
+    <!-- right -->
+    <polygon points="200,76 128,116 128,212 200,172" fill="#7d0f1a"/>
+
+    <!-- crisp outline -->
+    <polyline points="128,36 200,76 128,116 56,76 128,36" fill="none" stroke="#140206" stroke-width="8" stroke-linejoin="miter"/>
+    <polyline points="56,76 56,172 128,212 200,172 200,76" fill="none" stroke="#140206" stroke-width="8" stroke-linejoin="miter"/>
+    <polyline points="128,116 128,212" fill="none" stroke="#140206" stroke-width="8" stroke-linejoin="miter"/>
+
+    <!-- pixel specks -->
+    <g opacity="0.22" fill="#140206">
+      <rect x="78" y="118" width="10" height="10"/>
+      <rect x="96" y="140" width="12" height="12"/>
+      <rect x="170" y="124" width="10" height="10"/>
+      <rect x="154" y="148" width="12" height="12"/>
+    </g>
+  </g>
+</svg>

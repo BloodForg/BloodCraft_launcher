@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node", "electron"]
   },
-  "include": ["./main.ts"]
+  "include": ["./main.ts", "./launcher/**/*.ts"]
 }

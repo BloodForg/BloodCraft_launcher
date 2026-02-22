@@ -1,0 +1,29 @@
+export type UpdaterStatus = {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  message?: string;
+  progress?: number;
+  version?: string;
+};
+
+export const updateService = {
+  getStatus: async (): Promise<UpdaterStatus> => {
+    if (!window.bloodcraft?.updater) return { status: 'idle' };
+    return window.bloodcraft.updater.getStatus();
+  },
+  check: async (): Promise<boolean> => {
+    if (!window.bloodcraft?.updater) return false;
+    return window.bloodcraft.updater.check();
+  },
+  download: async (): Promise<boolean> => {
+    if (!window.bloodcraft?.updater) return false;
+    return window.bloodcraft.updater.download();
+  },
+  restart: async (): Promise<boolean> => {
+    if (!window.bloodcraft?.updater) return false;
+    return window.bloodcraft.updater.restart();
+  },
+  onStatus: (cb: (status: UpdaterStatus) => void) => {
+    if (!window.bloodcraft?.updater) return () => undefined;
+    return window.bloodcraft.updater.onStatus(cb);
+  }
+};

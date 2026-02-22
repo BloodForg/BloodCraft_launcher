@@ -1,19 +1,5 @@
+import logoUrl from '../assets/bloodcraft-logo.svg';
+
 export const LogoMark = () => {
-  return (
-    <svg viewBox="0 0 84 84" className="h-10 w-10">
-      <path
-        d="M42,6 C22,6 10,24 10,41 C10,58 22,73 42,79 C62,73 74,58 74,41 C74,24 62,6 42,6 Z"
-        fill="#E11D2E"
-      />
-      <path
-        d="M35,20 L46,20 C55,20 61,26 61,34 C61,39 58,43 53,45 C58,47 61,51 61,57 C61,65 55,71 46,71 L35,71 Z M43,29 L43,41 L46,41 C49,41 52,39 52,35 C52,31 49,29 46,29 Z M43,49 L43,62 L46,62 C49,62 52,60 52,55 C52,51 49,49 46,49 Z"
-        fill="#0B0D10"
-      />
-      <path
-        d="M42,16 C29,16 20,28 20,40 C20,53 29,64 42,68 C55,64 64,53 64,40 C64,28 55,16 42,16 Z"
-        fill="#E11D2E"
-        opacity="0.26"
-      />
-    </svg>
-  );
+  return <img src={logoUrl} alt="BloodCraft" className="h-10 w-10 rounded-lg" />;
 };
