@@ -19,6 +19,8 @@ const isDev = !app.isPackaged;
 let mainWindow: BrowserWindow | null = null;
 let lastLauncherError: string | undefined;
 let installInProgress = false;
+let isQuitting = false;
+let updateDownloaded = false;
 let updaterState: {
   status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
   message?: string;
@@ -93,6 +95,14 @@ function createWindow() {
     }
   });
 
+  win.on('close', () => {
+    if (isQuitting) {
+      log.info('[window] close allowed (quitting)');
+      return;
+    }
+    log.info('[window] close requested');
+  });
+
   return win;
 }
 
@@ -124,6 +134,7 @@ const setupUpdater = () => {
     sendUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
   });
   autoUpdater.on('update-available', (info) => {
+    updateDownloaded = false;
     log.info('[updater] update-available', { version: info?.version, files: info?.files?.map((f) => f.url) });
     sendUpdaterState({ status: 'available', version: info?.version, message: `Доступно обновление ${info?.version}` });
   });
@@ -140,6 +151,7 @@ const setupUpdater = () => {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    updateDownloaded = true;
     log.info('[updater] update-downloaded', { version: info?.version });
     sendUpdaterState({ status: 'downloaded', message: `Обновление ${info?.version} скачано` });
   });
@@ -305,7 +317,31 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('updater:restart', async () => {
-    autoUpdater.quitAndInstall();
+    log.info('[updater] restart requested');
+    if (!updateDownloaded) {
+      log.warn('[updater] restart denied: update is not downloaded');
+      return { ok: false, reason: 'not-downloaded' as const };
+    }
+
+    isQuitting = true;
+    app.removeAllListeners('window-all-closed');
+
+    setImmediate(() => {
+      log.info('[updater] calling quitAndInstall');
+      autoUpdater.quitAndInstall(true, true);
+      setTimeout(() => {
+        log.warn('[updater] quitAndInstall fallback: app.quit()');
+        app.quit();
+      }, 2000);
+    });
+
+    return { ok: true };
+  });
+
+  ipcMain.handle('app:quit', async () => {
+    log.info('[app] quit requested from renderer');
+    isQuitting = true;
+    app.quit();
     return true;
   });
 
@@ -400,4 +436,17 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
+  log.info('[app] before-quit set isQuitting=true');
+});
+
+app.on('will-quit', () => {
+  log.info('[app] will-quit');
+});
+
+app.on('quit', () => {
+  log.info('[app] quit');
 });

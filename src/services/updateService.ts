@@ -18,8 +18,8 @@ export const updateService = {
     if (!window.bloodcraft?.updater) return false;
     return window.bloodcraft.updater.download();
   },
-  restart: async (): Promise<boolean> => {
-    if (!window.bloodcraft?.updater) return false;
+  restart: async (): Promise<{ ok: boolean; reason?: 'not-downloaded' }> => {
+    if (!window.bloodcraft?.updater) return { ok: false };
     return window.bloodcraft.updater.restart();
   },
   onStatus: (cb: (status: UpdaterStatus) => void) => {

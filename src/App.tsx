@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import logoUrl from './assets/bloodcraft-logo.svg';
 import { LoginScreen } from './components/LoginScreen';
 import { PlayButton } from './components/PlayButton';
@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '0.1.9';
+const APP_VERSION = '0.2.0';
 
 function App() {
   const {
@@ -37,6 +37,7 @@ function App() {
     playHelpText,
     updater,
     setUpdaterState,
+    setBottomStatus,
     addToast
   } = useLauncherStore((s) => ({
     authChecked: s.authChecked,
@@ -61,9 +62,13 @@ function App() {
     playHelpText: s.playHelpText,
     updater: s.updater,
     setUpdaterState: s.setUpdaterState,
+    setBottomStatus: s.setBottomStatus,
     addToast: s.addToast
   }));
   const selectedServer = useLauncherStore(selectSelectedServer);
+  const [restarting, setRestarting] = useState(false);
+  const [restartFailed, setRestartFailed] = useState(false);
+  const restartTimerRef = useRef<number | null>(null);
 
   const handlePlayClick = () => {
     console.log('[ui] play click');
@@ -106,6 +111,12 @@ function App() {
     void updateService.check();
     return () => unsubscribe();
   }, [token, setUpdaterState]);
+
+  useEffect(() => {
+    return () => {
+      if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
+    };
+  }, []);
 
   if (!authChecked) {
     return <div className="min-h-screen bg-bc-bg" />;
@@ -297,9 +308,43 @@ function App() {
                   Скачать обновление
                 </button>
               )}
-              {updater.status === 'downloaded' && (
-                <button className="btn-secondary text-xs" onClick={() => void updateService.restart()}>
-                  Перезапустить
+              {(updater.status === 'downloaded' || restarting || restartFailed) && (
+                <button
+                  className="btn-secondary text-xs"
+                  disabled={restarting}
+                  onClick={async () => {
+                    if (restarting) return;
+                    setRestartFailed(false);
+                    setRestarting(true);
+                    setBottomStatus('Перезапуск...');
+                    const result = await updateService.restart();
+                    if (!result.ok) {
+                      setRestarting(false);
+                      setBottomStatus('Перезапуск не удался — откройте приложение заново');
+                      addToast(result.reason === 'not-downloaded' ? 'Обновление ещё не скачано' : 'Перезапуск не удался');
+                      setRestartFailed(true);
+                      return;
+                    }
+                    if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
+                    restartTimerRef.current = window.setTimeout(() => {
+                      setRestarting(false);
+                      setRestartFailed(true);
+                      setBottomStatus('Перезапуск не удался — откройте приложение заново');
+                      addToast('Перезапуск не удался — откройте приложение заново');
+                    }, 5000);
+                  }}
+                >
+                  {restarting ? 'Перезапуск...' : 'Перезапустить'}
+                </button>
+              )}
+              {restartFailed && (
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    void window.bloodcraft?.app?.quit();
+                  }}
+                >
+                  Выйти
                 </button>
               )}
               <div className="w-[200px]">

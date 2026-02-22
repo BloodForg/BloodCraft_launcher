@@ -57,6 +57,9 @@ declare global {
   interface Window {
     bloodcraft?: {
       openExternal: (url: string) => Promise<boolean>;
+      app?: {
+        quit: () => Promise<boolean>;
+      };
       auth?: {
         login: (
           login: string,
@@ -89,7 +92,7 @@ declare global {
         getStatus: () => Promise<UpdaterStatus>;
         check: () => Promise<boolean>;
         download: () => Promise<boolean>;
-        restart: () => Promise<boolean>;
+        restart: () => Promise<{ ok: boolean; reason?: 'not-downloaded' }>;
         onStatus: (cb: (status: UpdaterStatus) => void) => () => void;
       };
       launcher?: {

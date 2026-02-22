@@ -3,6 +3,9 @@ import type { Distribution, InstallProgress, LauncherStatus } from './launcher/t
 
 contextBridge.exposeInMainWorld('bloodcraft', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  app: {
+    quit: (): Promise<boolean> => ipcRenderer.invoke('app:quit')
+  },
   auth: {
     login: (
       login: string,
@@ -51,7 +54,7 @@ contextBridge.exposeInMainWorld('bloodcraft', {
     }> => ipcRenderer.invoke('updater:getStatus'),
     check: (): Promise<boolean> => ipcRenderer.invoke('updater:check'),
     download: (): Promise<boolean> => ipcRenderer.invoke('updater:download'),
-    restart: (): Promise<boolean> => ipcRenderer.invoke('updater:restart'),
+    restart: (): Promise<{ ok: boolean; reason?: 'not-downloaded' }> => ipcRenderer.invoke('updater:restart'),
     onStatus: (
       cb: (status: {
         status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
