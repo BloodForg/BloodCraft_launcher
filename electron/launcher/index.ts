@@ -27,10 +27,20 @@ interface LaunchOptions {
   maxMemoryGb?: number;
   username?: string;
   uuid?: string;
+  joinToken?: string;
 }
 
 const TARGET_MC_VERSION = '1.21.11';
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const AUTH_CHANNEL = 'bloodcraft:auth';
+const AUTH_HOSTS_DEFAULT = 'thebloodcraft.ru,mc.thebloodcraft.ru,46.181.94.25';
+const AUTH_CLIENT_MOD_FILE = 'bloodcraft-auth-client-1.0.0.jar';
+const AUTH_CLIENT_MOD_URL = 'https://thebloodcraft.ru/launcher/files/bloodcraft-auth-client-1.0.0.jar';
+const AUTH_CLIENT_MOD_SHA256 = 'fbfa4607c5d99fae1ad2528cdbf1e6b7d6d33dc6a36133544616f5674c45e506';
+const FABRIC_API_MOD_FILE = 'fabric-api-0.115.1+1.21.1.jar';
+const FABRIC_API_MOD_URL =
+  'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.115.1+1.21.1/fabric-api-0.115.1+1.21.1.jar';
+const FABRIC_API_MOD_SHA256 = '3b952cfa1b4b82579da4699c49a60148a326768b5746ff3dfc25a6a96a8d0ea7';
 
 function getMcVersion(distribution: Distribution): string {
   return distribution.mcVersion ?? distribution.minecraft?.version ?? TARGET_MC_VERSION;
@@ -77,6 +87,34 @@ async function sha256File(filePath: string): Promise<string> {
   stream.on('data', (chunk: string | Buffer) => hash.update(chunk));
   await once(stream, 'end');
   return hash.digest('hex');
+}
+
+function tokenFingerprint(value: string): string {
+  const hash = createHash('sha256').update(value).digest('hex');
+  return hash.slice(0, 8);
+}
+
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: 'follow' });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} for ${url}`);
+    }
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function mavenPathFromCoordinate(coordinate: string): string {
+  const parts = coordinate.split(':');
+  if (parts.length < 3) {
+    throw new Error(`Invalid Maven coordinate: ${coordinate}`);
+  }
+  const [group, artifact, version] = parts;
+  return `${group.replace(/\./g, '/')}/${artifact}/${version}/${artifact}-${version}.jar`;
 }
 
 async function ensureDir(dirPath: string): Promise<void> {
@@ -556,17 +594,86 @@ function sanitizeLaunchArgs(args: string[]): string[] {
   return sanitized;
 }
 
+async function ensureDownloadedFile(targetPath: string, url: string, expectedSha256?: string): Promise<void> {
+  await ensureDir(path.dirname(targetPath));
+  const currentSha = existsSync(targetPath) ? await sha256File(targetPath).catch(() => '') : '';
+  if (currentSha && (!expectedSha256 || currentSha === expectedSha256)) {
+    return;
+  }
+  await removeIfExists(targetPath);
+  await downloadToFile(url, targetPath, () => undefined);
+  if (expectedSha256) {
+    const actual = await sha256File(targetPath);
+    if (actual !== expectedSha256) {
+      throw new Error(`Checksum mismatch for ${path.basename(targetPath)}`);
+    }
+  }
+}
+
+async function ensureAuthMods(gameDir: string): Promise<void> {
+  const modsDir = path.join(gameDir, 'mods');
+  await ensureDir(modsDir);
+  const authModPath = path.join(modsDir, AUTH_CLIENT_MOD_FILE);
+  const fabricApiPath = path.join(modsDir, FABRIC_API_MOD_FILE);
+  await ensureDownloadedFile(authModPath, AUTH_CLIENT_MOD_URL, AUTH_CLIENT_MOD_SHA256);
+  await ensureDownloadedFile(fabricApiPath, FABRIC_API_MOD_URL, FABRIC_API_MOD_SHA256);
+}
+
+interface FabricProfile {
+  mainClass: string;
+  arguments?: {
+    game?: string[];
+    jvm?: string[];
+  };
+  libraries?: Array<{
+    name: string;
+    url?: string;
+    sha1?: string;
+    sha256?: string;
+  }>;
+}
+
+async function ensureFabricLoaderLibraries(gameDir: string, mcVersion: string): Promise<FabricProfile> {
+  const loaderCandidates = await fetchJsonWithTimeout<Array<{ loader?: { version?: string; stable?: boolean } }>>(
+    `https://meta.fabricmc.net/v2/versions/loader/${mcVersion}`,
+    8000
+  );
+  const stable = loaderCandidates.find((entry) => entry?.loader?.stable && entry.loader.version)?.loader?.version;
+  const loaderVersion = stable || loaderCandidates[0]?.loader?.version;
+  if (!loaderVersion) {
+    throw new Error(`Fabric loader version not found for ${mcVersion}`);
+  }
+
+  const profile = await fetchJsonWithTimeout<FabricProfile>(
+    `https://meta.fabricmc.net/v2/versions/loader/${mcVersion}/${loaderVersion}/profile/json`,
+    10000
+  );
+
+  const libraries = profile.libraries ?? [];
+  for (const lib of libraries) {
+    const mavenPath = mavenPathFromCoordinate(lib.name);
+    const repoUrl = (lib.url ?? 'https://maven.fabricmc.net/').replace(/\/+$/, '');
+    const url = `${repoUrl}/${mavenPath}`;
+    const targetPath = path.join(gameDir, 'runtime', 'libraries', mavenPath);
+    await ensureDownloadedFile(targetPath, url, lib.sha256);
+  }
+  return profile;
+}
+
 async function launchWithJavaProcess(
   distribution: Distribution,
   gameDir: string,
   onProgress: ((progress: InstallProgress) => void) | undefined,
   options?: LaunchOptions
 ): Promise<void> {
-  const mainClass = distribution.launch?.mainClass;
-  if (!mainClass) {
+  const distributionMainClass = distribution.launch?.mainClass;
+  if (!distributionMainClass) {
     throw new Error('Сборка клиента повреждена или не опубликована');
   }
   const { javaPath, source: javaSource } = await resolveJavaPath(options);
+  await ensureAuthMods(gameDir);
+  const fabricProfile = await ensureFabricLoaderLibraries(gameDir, getMcVersion(distribution));
+  const mainClass = fabricProfile.mainClass || distributionMainClass;
 
   const jarFiles = await collectJarFiles(gameDir);
   if (!jarFiles.length) {
@@ -591,7 +698,7 @@ async function launchWithJavaProcess(
   const launcherGameDir = path.join(getInstanceDir(), 'game');
   const { username, uuid } = resolveLaunchIdentity(options?.username, options?.uuid);
 
-  const jvmArgs = sanitizeLaunchArgs((distribution.launch?.jvmArgs ?? []).map((arg) =>
+  const distJvmArgs = (distribution.launch?.jvmArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
       gameDir,
       assetsRoot,
@@ -603,14 +710,35 @@ async function launchWithJavaProcess(
       username,
       uuid
     })
-  ));
+  );
+  const fabricJvmArgs = (fabricProfile.arguments?.jvm ?? []).map((arg) =>
+    applyLaunchPlaceholders(arg, {
+      gameDir,
+      assetsRoot,
+      assetIndex: assetIndexName,
+      version: mcVersion,
+      classPath,
+      serverHost: distribution.server?.host,
+      serverPort: distribution.server?.port,
+      username,
+      uuid
+    })
+  );
+  const jvmArgs = sanitizeLaunchArgs([...distJvmArgs, ...fabricJvmArgs]);
+
+  const joinToken = options?.joinToken?.trim();
+  if (!joinToken) {
+    throw new Error('Не удалось получить join-token. Повторите вход в лаунчер.');
+  }
+  jvmArgs.push(`-Dbloodcraft.joinToken=${joinToken}`);
+  jvmArgs.push(`-Dbloodcraft.authHosts=${AUTH_HOSTS_DEFAULT}`);
 
   if (process.platform === 'darwin' && !jvmArgs.includes('-XstartOnFirstThread')) {
     jvmArgs.unshift('-XstartOnFirstThread');
     log.info('[game] added -XstartOnFirstThread');
   }
 
-  const gameArgs = sanitizeLaunchArgs((distribution.launch?.gameArgs ?? []).map((arg) =>
+  const distributionGameArgs = (distribution.launch?.gameArgs ?? []).map((arg) =>
     applyLaunchPlaceholders(arg, {
       gameDir,
       assetsRoot,
@@ -622,7 +750,21 @@ async function launchWithJavaProcess(
       username,
       uuid
     })
-  ));
+  );
+  const fabricGameArgs = (fabricProfile.arguments?.game ?? []).map((arg) =>
+    applyLaunchPlaceholders(arg, {
+      gameDir,
+      assetsRoot,
+      assetIndex: assetIndexName,
+      version: mcVersion,
+      classPath,
+      serverHost: distribution.server?.host,
+      serverPort: distribution.server?.port,
+      username,
+      uuid
+    })
+  );
+  const gameArgs = sanitizeLaunchArgs([...distributionGameArgs, ...fabricGameArgs]);
 
   ensureArgPair(gameArgs, '--accessToken', '0');
   ensureArgPair(gameArgs, '--version', TARGET_MC_VERSION);
@@ -656,6 +798,9 @@ async function launchWithJavaProcess(
     jvmArgsCount: jvmArgs.length,
     gameArgsCount: gameArgs.length,
     classPathEntriesCount,
+    joinTokenLen: joinToken.length,
+    joinTokenFp: tokenFingerprint(joinToken),
+    authChannel: AUTH_CHANNEL,
     cwd: gameDir
   });
   log.info('[game] launching java', {

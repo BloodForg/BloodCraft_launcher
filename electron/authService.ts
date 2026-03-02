@@ -5,10 +5,12 @@ export const AUTH_LOGIN_URL = `${AUTH_BASE_URL}/api/launcher/login`;
 export const AUTH_ME_URL = `${AUTH_BASE_URL}/api/launcher/me`;
 export const AUTH_REFRESH_URL = `${AUTH_BASE_URL}/api/launcher/refresh`;
 export const AUTH_HEALTH_URL = `${AUTH_BASE_URL}/api/launcher/health`;
+export const AUTH_JOIN_TOKEN_URL = `${AUTH_BASE_URL}/api/auth/join-token`;
 const FALLBACK_HEALTH_URL = `${AUTH_BASE_URL}/api/health`;
 const AUTH_SERVICE_NAME = 'BloodCraft Launcher';
 const AUTH_ACCOUNT_REFRESH = 'refreshToken';
 const FETCH_TIMEOUT_MS = 12000;
+const JOIN_TOKEN_TIMEOUT_MS = 5000;
 
 export interface AuthUser {
   username: string;
@@ -20,6 +22,11 @@ export interface AuthUser {
 export interface AuthSession {
   accessToken: string;
   user: AuthUser;
+}
+
+export interface JoinTokenPayload {
+  token: string;
+  expiresIn: number;
 }
 
 export interface AuthErrorPayload {
@@ -45,6 +52,10 @@ export interface NetworkDiagnostics {
 }
 
 let accessToken: string | null = null;
+
+function tokenFingerprint(value: string): string {
+  return value.length >= 8 ? value.slice(0, 4) + value.slice(-4) : value;
+}
 
 function normalizeUser(raw: unknown): AuthUser {
   const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
@@ -363,6 +374,63 @@ export async function refreshSession(): Promise<AuthSession> {
 
   const user = parsed.user ?? (await meWithToken(parsed.accessToken));
   return { accessToken: parsed.accessToken, user };
+}
+
+export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
+  if (!accessToken) {
+    throw { code: 'UNAUTHORIZED', message: 'Нет активной сессии' } satisfies AuthErrorPayload;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), JOIN_TOKEN_TIMEOUT_MS);
+
+  try {
+    log.info('[auth] request POST /api/auth/join-token');
+    const response = await fetch(AUTH_JOIN_TOKEN_URL, {
+      method: 'POST',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+        authorization: `Bearer ${accessToken}`,
+        'content-type': 'application/json'
+      },
+      body: '{}'
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) {
+      throw {
+        code: response.status === 401 || response.status === 403 ? 'UNAUTHORIZED' : response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
+        message: typeof payload.reason === 'string' ? payload.reason : `join-token failed (${response.status})`,
+        status: response.status,
+        url: AUTH_JOIN_TOKEN_URL
+      } satisfies AuthErrorPayload;
+    }
+
+    const token = typeof payload.token === 'string' ? payload.token : '';
+    const expiresIn = typeof payload.expiresIn === 'number' ? payload.expiresIn : 0;
+    if (!token || !expiresIn) {
+      throw {
+        code: 'INVALID_RESPONSE',
+        message: 'Некорректный ответ join-token endpoint'
+      } satisfies AuthErrorPayload;
+    }
+
+    log.info('[auth] join-token received', {
+      expiresIn,
+      tokenLen: token.length,
+      tokenFp: tokenFingerprint(token)
+    });
+    return { token, expiresIn };
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      throw error;
+    }
+    throw classifyNetworkError(error);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function logoutSession(): Promise<void> {

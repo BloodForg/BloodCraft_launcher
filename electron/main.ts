@@ -7,7 +7,7 @@ import log from 'electron-log';
 import updaterPkg from 'electron-updater';
 import { fetchDistribution, getStatus, install, launch } from './launcher/index.js';
 import type { InstallProgress } from './launcher/types.js';
-import { devSelfCheck, loginWithSite, logoutSession, mapAuthError, me, refreshSession, runNetworkDiagnostics } from './authService.js';
+import { devSelfCheck, fetchJoinTokenForLaunch, loginWithSite, logoutSession, mapAuthError, me, refreshSession, runNetworkDiagnostics } from './authService.js';
 
 const { autoUpdater } = updaterPkg as unknown as {
   autoUpdater: import('electron-updater').AppUpdater;
@@ -471,7 +471,15 @@ app.whenReady().then(() => {
   ipcMain.handle('launcher:launch', async (_event, options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number; username?: string; uuid?: string }) => {
     log.info('[ipc] launcher:launch invoked', options ?? {});
     try {
-      await launch((progress: InstallProgress) => emitProgress(progress), options);
+      const joinToken = await fetchJoinTokenForLaunch();
+      log.info('[ipc] launcher:launch auth ready', {
+        joinTokenExpiresIn: joinToken.expiresIn,
+        hasJoinToken: Boolean(joinToken.token)
+      });
+      await launch((progress: InstallProgress) => emitProgress(progress), {
+        ...options,
+        joinToken: joinToken.token
+      });
       mainWindow?.webContents.send('game:launched', { ok: true, message: 'Minecraft process started' });
       log.info('[ipc] launcher:launch completed');
       return true;
