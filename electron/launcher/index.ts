@@ -41,6 +41,7 @@ const FABRIC_API_MOD_FILE = 'fabric-api-0.115.1+1.21.1.jar';
 const FABRIC_API_MOD_URL =
   'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.115.1+1.21.1/fabric-api-0.115.1+1.21.1.jar';
 const FABRIC_API_MOD_SHA256 = '3b952cfa1b4b82579da4699c49a60148a326768b5746ff3dfc25a6a96a8d0ea7';
+const JAVA_LAUNCH_LOG_LIMIT = 200;
 
 function getMcVersion(distribution: Distribution): string {
   return distribution.mcVersion ?? distribution.minecraft?.version ?? TARGET_MC_VERSION;
@@ -92,6 +93,17 @@ async function sha256File(filePath: string): Promise<string> {
 function tokenFingerprint(value: string): string {
   const hash = createHash('sha256').update(value).digest('hex');
   return hash.slice(0, 8);
+}
+
+function maskSensitiveArg(value: string): string {
+  if (value.startsWith('-Dbloodcraft.joinToken=')) {
+    return '-Dbloodcraft.joinToken=<redacted>';
+  }
+  return value;
+}
+
+function maskSensitiveArgs(values: string[]): string[] {
+  return values.map(maskSensitiveArg);
 }
 
 async function fetchJsonWithTimeout<T>(url: string, timeoutMs: number): Promise<T> {
@@ -211,6 +223,17 @@ async function checkJavaAvailable(javaCommand = 'java'): Promise<boolean> {
     const proc = spawn(javaCommand, ['-version']);
     proc.once('error', () => resolve(false));
     proc.once('exit', (code) => resolve(code === 0));
+  });
+}
+
+async function getJavaVersionSummary(javaPath: string): Promise<string> {
+  return await new Promise<string>((resolve) => {
+    const child = spawn(javaPath, ['-version']);
+    const chunks: string[] = [];
+    child.stdout.on('data', (data: Buffer) => chunks.push(data.toString('utf8')));
+    child.stderr.on('data', (data: Buffer) => chunks.push(data.toString('utf8')));
+    child.once('error', (error) => resolve(`error:${error.message}`));
+    child.once('exit', () => resolve(chunks.join(' ').replace(/\s+/g, ' ').trim().slice(0, 240)));
   });
 }
 
@@ -613,10 +636,15 @@ async function ensureDownloadedFile(targetPath: string, url: string, expectedSha
 async function ensureAuthMods(gameDir: string): Promise<void> {
   const modsDir = path.join(gameDir, 'mods');
   await ensureDir(modsDir);
+  log.info('[game] ensure auth mods start', { modsDir });
   const authModPath = path.join(modsDir, AUTH_CLIENT_MOD_FILE);
   const fabricApiPath = path.join(modsDir, FABRIC_API_MOD_FILE);
   await ensureDownloadedFile(authModPath, AUTH_CLIENT_MOD_URL, AUTH_CLIENT_MOD_SHA256);
   await ensureDownloadedFile(fabricApiPath, FABRIC_API_MOD_URL, FABRIC_API_MOD_SHA256);
+  log.info('[game] ensure auth mods done', {
+    authClientExists: existsSync(authModPath),
+    fabricApiExists: existsSync(fabricApiPath)
+  });
 }
 
 interface FabricProfile {
@@ -670,11 +698,26 @@ async function launchWithJavaProcess(
   if (!distributionMainClass) {
     throw new Error('Сборка клиента повреждена или не опубликована');
   }
+  log.info('[game] launch phase: prepare', { gameDir, hasLaunchMainClass: Boolean(distributionMainClass) });
+
+  await ensureDir(gameDir);
+  await ensureDir(getLauncherLogsDir());
+  const probePath = path.join(gameDir, '.write-probe');
+  await fs.writeFile(probePath, String(Date.now()), 'utf8');
+  await fs.rm(probePath, { force: true });
+  log.info('[game] launch phase: writable checks passed', { gameDir, logsDir: getLauncherLogsDir() });
+
   const { javaPath, source: javaSource } = await resolveJavaPath(options);
+  const javaVersionSummary = await getJavaVersionSummary(javaPath);
+  log.info('[game] launch phase: java resolved', { javaPath, javaSource, javaVersionSummary, arch: process.arch });
+
+  log.info('[game] launch phase: ensuring auth mod + fabric loader');
   await ensureAuthMods(gameDir);
   const fabricProfile = await ensureFabricLoaderLibraries(gameDir, getMcVersion(distribution));
   const mainClass = fabricProfile.mainClass || distributionMainClass;
+  log.info('[game] launch phase: fabric loader ready', { fabricMainClass: fabricProfile.mainClass, effectiveMainClass: mainClass });
 
+  log.info('[game] launch phase: building classpath');
   const jarFiles = await collectJarFiles(gameDir);
   if (!jarFiles.length) {
     throw new Error('Сборка клиента повреждена или не опубликована');
@@ -786,8 +829,12 @@ async function launchWithJavaProcess(
   const args = [`-Xmx${maxMem}G`, `-Xms${minMem}G`, ...jvmArgs, '-cp', classPath, mainClass, ...gameArgs];
 
   await ensureDir(getLauncherLogsDir());
-  const logPath = path.join(getLauncherLogsDir(), `minecraft-${Date.now()}.log`);
+  const startedAt = Date.now();
+  const logPath = path.join(getLauncherLogsDir(), `minecraft-${startedAt}.log`);
+  const javaLaunchLogPath = path.join(getLauncherLogsDir(), `java-launch-${new Date(startedAt).toISOString().replace(/[:.]/g, '-')}.log`);
   const logStream = createWriteStream(logPath, { flags: 'a' });
+  const javaLaunchLogStream = createWriteStream(javaLaunchLogPath, { flags: 'a' });
+  let javaLaunchLines = 0;
 
   onProgress?.({ stage: 'launching', message: 'Запуск Minecraft...' });
   log.info(`[game] resolved java path: ${javaPath} source=${javaSource}`);
@@ -801,52 +848,79 @@ async function launchWithJavaProcess(
     joinTokenLen: joinToken.length,
     joinTokenFp: tokenFingerprint(joinToken),
     authChannel: AUTH_CHANNEL,
+    jvmArgsMasked: maskSensitiveArgs(jvmArgs),
+    gameArgsMasked: maskSensitiveArgs(gameArgs),
+    javaLaunchLogPath,
     cwd: gameDir
   });
   log.info('[game] launching java', {
     javaPath,
     mainClass,
-    argsLength: args.length,
+    argsMasked: maskSensitiveArgs(args),
     cwd: gameDir
   });
 
   const child = spawn(javaPath, args, { cwd: gameDir, stdio: ['ignore', 'pipe', 'pipe'] });
+  log.info('[game] spawn created', { pid: child.pid, javaLaunchLogPath });
 
   child.stdout.on('data', (data: Buffer) => {
     const line = data.toString('utf8');
     logStream.write(line);
+    if (javaLaunchLines < JAVA_LAUNCH_LOG_LIMIT) {
+      javaLaunchLogStream.write(`[stdout] ${line}`);
+      javaLaunchLines += 1;
+    }
     log.info(`[mc] ${line.trim()}`);
   });
   child.stderr.on('data', (data: Buffer) => {
     const line = data.toString('utf8');
     logStream.write(line);
+    if (javaLaunchLines < JAVA_LAUNCH_LOG_LIMIT) {
+      javaLaunchLogStream.write(`[stderr] ${line}`);
+      javaLaunchLines += 1;
+    }
     log.warn(`[mc:err] ${line.trim()}`);
   });
 
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const startTimer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      onProgress?.({ stage: 'done', percent: 100, message: 'Minecraft запущен' });
-      resolve();
-    }, 15_000);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const startTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        onProgress?.({ stage: 'done', percent: 100, message: 'Minecraft запущен' });
+        resolve();
+      }, 15_000);
 
-    const settleError = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(startTimer);
-      reject(error);
-    };
+      const settleError = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(startTimer);
+        reject(error);
+      };
 
-    child.once('error', (error) => {
-      settleError(error instanceof Error ? error : new Error(String(error)));
+      child.once('error', (error) => {
+        log.error('[game] spawn error', {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+          javaLaunchLogPath
+        });
+        settleError(error instanceof Error ? error : new Error(String(error)));
+      });
+
+      child.once('exit', (code) => {
+        log.warn('[game] process exit before ready', {
+          code: code ?? 0,
+          uptimeMs: Date.now() - startedAt,
+          javaLaunchLogPath
+        });
+        settleError(new Error(`Minecraft завершился (код ${code ?? 0})`));
+      });
     });
-
-    child.once('exit', (code) => {
-      settleError(new Error(`Minecraft завершился (код ${code ?? 0})`));
-    });
-  });
+  } finally {
+    javaLaunchLogStream.end();
+  }
 }
 
 async function launchWithMclcFallback(
@@ -921,6 +995,13 @@ async function launchWithMclcFallback(
 export async function launch(onProgress?: (progress: InstallProgress) => void, options?: LaunchOptions): Promise<void> {
   const distribution = await fetchDistribution();
   const mcVersion = getMcVersion(distribution);
+  log.info('[game] launch phase: manifest validated', {
+    instanceId: distribution.instanceId,
+    mcVersion,
+    filesCount: distribution.files?.length ?? 0,
+    hasZip: Boolean(distribution.zipUrl || distribution.package?.url),
+    hasLaunch: Boolean(distribution.launch?.mainClass)
+  });
 
   log.info('[game] play start', {
     manifestUrl: DISTRIBUTION_URL,

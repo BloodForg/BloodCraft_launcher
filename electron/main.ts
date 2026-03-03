@@ -34,6 +34,40 @@ let queuedProgress: InstallProgress | null = null;
 let progressTimer: NodeJS.Timeout | null = null;
 const PROGRESS_THROTTLE_MS = 120;
 
+function toErrorDetails(error: unknown): {
+  message: string;
+  name: string;
+  stack?: string;
+  cause?: unknown;
+  raw?: unknown;
+} {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+      cause: (error as Error & { cause?: unknown }).cause
+    };
+  }
+
+  if (error && typeof error === 'object') {
+    const candidate = error as { message?: unknown; code?: unknown; name?: unknown; stack?: unknown; cause?: unknown };
+    return {
+      message: typeof candidate.message === 'string' ? candidate.message : JSON.stringify(error),
+      name: typeof candidate.name === 'string' ? candidate.name : 'NonErrorThrow',
+      stack: typeof candidate.stack === 'string' ? candidate.stack : undefined,
+      cause: candidate.cause,
+      raw: error
+    };
+  }
+
+  return {
+    message: String(error ?? 'Unknown error'),
+    name: 'UnknownError',
+    raw: error
+  };
+}
+
 function flushProgress(force = false) {
   if (!mainWindow || !queuedProgress) return;
   if (!force && Date.now() - lastProgressAt < PROGRESS_THROTTLE_MS) return;
@@ -214,8 +248,8 @@ const setupUpdater = () => {
       sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
       return;
     }
-    log.error('[updater] error', { message: error instanceof Error ? error.message : String(error) });
-    sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
+    log.warn('[updater] error (non-fatal)', { message: error instanceof Error ? error.message : String(error) });
+    sendUpdaterState({ status: 'not-available', message: 'Проверка обновлений пропущена' });
   });
 };
 
@@ -484,8 +518,16 @@ app.whenReady().then(() => {
       log.info('[ipc] launcher:launch completed');
       return true;
     } catch (error) {
-      lastLauncherError = error instanceof Error ? error.message : 'Unknown launcher:launch error';
-      log.error('[ipc] launcher:launch failed', { error: lastLauncherError });
+      const details = toErrorDetails(error);
+      lastLauncherError = details.message;
+      log.error('[ipc] launcher:launch failed', {
+        message: details.message,
+        name: details.name,
+        stack: details.stack,
+        cause: details.cause,
+        raw: details.raw,
+        options
+      });
       emitProgress({ stage: 'error', message: lastLauncherError });
       mainWindow?.webContents.send('game:error', { code: 'LAUNCH_FAILED', message: lastLauncherError });
       return false;
@@ -511,8 +553,8 @@ app.whenReady().then(() => {
         sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
         return;
       }
-      log.warn('[updater] startup check failed', error);
-      sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
+      log.warn('[updater] startup check failed (non-fatal)', error);
+      sendUpdaterState({ status: 'not-available', message: 'Проверка обновлений пропущена' });
     });
   }
 

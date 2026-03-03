@@ -11,6 +11,7 @@ const AUTH_SERVICE_NAME = 'BloodCraft Launcher';
 const AUTH_ACCOUNT_REFRESH = 'refreshToken';
 const FETCH_TIMEOUT_MS = 12000;
 const JOIN_TOKEN_TIMEOUT_MS = 5000;
+const JOIN_TOKEN_RETRIES = 1;
 
 export interface AuthUser {
   username: string;
@@ -55,6 +56,15 @@ let accessToken: string | null = null;
 
 function tokenFingerprint(value: string): string {
   return value.length >= 8 ? value.slice(0, 4) + value.slice(-4) : value;
+}
+
+function buildAuthError(payload: AuthErrorPayload): Error & AuthErrorPayload {
+  const err = new Error(payload.message) as Error & AuthErrorPayload;
+  err.name = 'AuthServiceError';
+  err.code = payload.code;
+  err.status = payload.status;
+  err.url = payload.url;
+  return err;
 }
 
 function normalizeUser(raw: unknown): AuthUser {
@@ -378,59 +388,84 @@ export async function refreshSession(): Promise<AuthSession> {
 
 export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
   if (!accessToken) {
-    throw { code: 'UNAUTHORIZED', message: 'Нет активной сессии' } satisfies AuthErrorPayload;
+    throw buildAuthError({ code: 'UNAUTHORIZED', message: 'Нет активной сессии' });
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort('timeout'), JOIN_TOKEN_TIMEOUT_MS);
+  for (let attempt = 0; attempt <= JOIN_TOKEN_RETRIES; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort('timeout'), JOIN_TOKEN_TIMEOUT_MS);
+    try {
+      log.info('[auth] join-token request started', { attempt: attempt + 1, url: AUTH_JOIN_TOKEN_URL });
+      const response = await fetch(AUTH_JOIN_TOKEN_URL, {
+        method: 'POST',
+        redirect: 'follow',
+        signal: controller.signal,
+        headers: {
+          accept: 'application/json',
+          authorization: `Bearer ${accessToken}`,
+          'content-type': 'application/json'
+        },
+        body: '{}'
+      });
 
-  try {
-    log.info('[auth] request POST /api/auth/join-token');
-    const response = await fetch(AUTH_JOIN_TOKEN_URL, {
-      method: 'POST',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        accept: 'application/json',
-        authorization: `Bearer ${accessToken}`,
-        'content-type': 'application/json'
-      },
-      body: '{}'
-    });
-
-    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!response.ok) {
-      throw {
-        code: response.status === 401 || response.status === 403 ? 'UNAUTHORIZED' : response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
-        message: typeof payload.reason === 'string' ? payload.reason : `join-token failed (${response.status})`,
+      const responseText = await response.text();
+      let payload: Record<string, unknown> = {};
+      try {
+        payload = responseText ? (JSON.parse(responseText) as Record<string, unknown>) : {};
+      } catch {
+        payload = {};
+      }
+      const preview = responseText.replace(/\s+/g, ' ').slice(0, 200);
+      log.info('[auth] join-token response', {
+        attempt: attempt + 1,
         status: response.status,
-        url: AUTH_JOIN_TOKEN_URL
-      } satisfies AuthErrorPayload;
-    }
+        ok: response.ok,
+        bodyPreview: preview
+      });
 
-    const token = typeof payload.token === 'string' ? payload.token : '';
-    const expiresIn = typeof payload.expiresIn === 'number' ? payload.expiresIn : 0;
-    if (!token || !expiresIn) {
-      throw {
-        code: 'INVALID_RESPONSE',
-        message: 'Некорректный ответ join-token endpoint'
-      } satisfies AuthErrorPayload;
-    }
+      if (!response.ok) {
+        throw buildAuthError({
+          code: response.status === 401 || response.status === 403 ? 'UNAUTHORIZED' : response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
+          message: typeof payload.reason === 'string' ? payload.reason : `join-token failed (${response.status})`,
+          status: response.status,
+          url: AUTH_JOIN_TOKEN_URL
+        });
+      }
 
-    log.info('[auth] join-token received', {
-      expiresIn,
-      tokenLen: token.length,
-      tokenFp: tokenFingerprint(token)
-    });
-    return { token, expiresIn };
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error) {
-      throw error;
+      const token = typeof payload.token === 'string' ? payload.token : '';
+      const expiresIn = typeof payload.expiresIn === 'number' ? payload.expiresIn : 0;
+      if (!token || !expiresIn) {
+        throw buildAuthError({
+          code: 'INVALID_RESPONSE',
+          message: 'Некорректный ответ join-token endpoint'
+        });
+      }
+
+      log.info('[auth] join-token received', {
+        attempt: attempt + 1,
+        expiresIn,
+        tokenLen: token.length,
+        tokenFp: tokenFingerprint(token)
+      });
+      return { token, expiresIn };
+    } catch (error) {
+      const mapped = error instanceof Error ? error : buildAuthError(classifyNetworkError(error));
+      log.warn('[auth] join-token request failed', {
+        attempt: attempt + 1,
+        name: mapped.name,
+        message: mapped.message,
+        stack: mapped.stack
+      });
+      if (attempt < JOIN_TOKEN_RETRIES) {
+        continue;
+      }
+      throw mapped;
+    } finally {
+      clearTimeout(timer);
     }
-    throw classifyNetworkError(error);
-  } finally {
-    clearTimeout(timer);
   }
+
+  throw buildAuthError({ code: 'UNKNOWN', message: 'join-token request failed' });
 }
 
 export async function logoutSession(): Promise<void> {
