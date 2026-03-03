@@ -120,6 +120,29 @@ function bodyPreview(text: string): string {
   return text.replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
+function sanitizePreview(text: string): string {
+  if (!text) return '';
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const scrub = (input: unknown): unknown => {
+      if (Array.isArray(input)) return input.map(scrub);
+      if (!input || typeof input !== 'object') return input;
+      const out: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+        if (/(token|password|secret)/i.test(key)) {
+          out[key] = '<redacted>';
+        } else {
+          out[key] = scrub(value);
+        }
+      }
+      return out;
+    };
+    return bodyPreview(JSON.stringify(scrub(parsed)));
+  } catch {
+    return bodyPreview(text.replace(/[A-Za-z0-9-_]{24,}\.[A-Za-z0-9-_]{10,}\.[A-Za-z0-9-_]{10,}/g, '<redacted-jwt>'));
+  }
+}
+
 function classifyNetworkError(error: unknown): AuthErrorPayload {
   const message = error instanceof Error ? error.message : String(error ?? 'unknown');
   const causeCode =
@@ -212,7 +235,7 @@ async function fetchJson(url: string, init: RequestInit): Promise<Record<string,
     });
 
     const text = await response.text();
-    const preview = bodyPreview(text);
+    const preview = sanitizePreview(text);
     log.info(`[auth] response ${method} ${url} -> ${response.status} final=${response.url} body="${preview}"`);
 
     let parsed: Record<string, unknown> = {};
@@ -415,7 +438,7 @@ export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
       } catch {
         payload = {};
       }
-      const preview = responseText.replace(/\s+/g, ' ').slice(0, 200);
+      const preview = sanitizePreview(responseText);
       log.info('[auth] join-token response', {
         attempt: attempt + 1,
         status: response.status,
@@ -426,7 +449,12 @@ export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
       if (!response.ok) {
         throw buildAuthError({
           code: response.status === 401 || response.status === 403 ? 'UNAUTHORIZED' : response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
-          message: typeof payload.reason === 'string' ? payload.reason : `join-token failed (${response.status})`,
+          message:
+            typeof payload.reason === 'string'
+              ? payload.reason
+              : typeof (payload.error as { message?: unknown } | undefined)?.message === 'string'
+                ? String((payload.error as { message: string }).message)
+                : `join-token failed (${response.status})`,
           status: response.status,
           url: AUTH_JOIN_TOKEN_URL
         });
