@@ -10,6 +10,16 @@ const VERSION = process.argv[2] ?? '1.21.11';
 const OUT_DIR = process.argv[3] ?? `/tmp/bloodcraft-runtime-${VERSION}`;
 const ARCH = process.arch === 'arm64' ? 'arm64' : 'x64';
 const OS_NAME = process.platform === 'darwin' ? 'osx' : process.platform === 'win32' ? 'windows' : 'linux';
+const AUTH_CLIENT_MOD = {
+  path: 'mods/bloodcraft-auth-client-1.0.0.jar',
+  url: 'https://thebloodcraft.ru/launcher/files/bloodcraft-auth-client-1.0.0.jar',
+  sha256: 'fbfa4607c5d99fae1ad2528cdbf1e6b7d6d33dc6a36133544616f5674c45e506'
+};
+const FABRIC_API_MOD = {
+  path: 'mods/fabric-api-0.115.1+1.21.1.jar',
+  url: 'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.115.1+1.21.1/fabric-api-0.115.1+1.21.1.jar',
+  sha256: '3b952cfa1b4b82579da4699c49a60148a326768b5746ff3dfc25a6a96a8d0ea7'
+};
 
 const versionManifestUrl = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
 
@@ -230,6 +240,7 @@ const run = async () => {
   const manifest = {
     instanceId: 'bloodcraft-main',
     mcVersion: VERSION,
+    files: [AUTH_CLIENT_MOD, FABRIC_API_MOD],
     zipUrl: `https://thebloodcraft.ru/launcher/files/client-${VERSION}.zip`,
     zipSha256: sha,
     zipSize: size,

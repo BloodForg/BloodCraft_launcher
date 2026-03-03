@@ -356,7 +356,13 @@ async function installFromZip(distribution: Distribution, onProgress: (progress:
 
 async function installFromFiles(distribution: Distribution, onProgress: (progress: InstallProgress) => void): Promise<string> {
   const files = distribution.files ?? [];
-  if (!files.length) return installFromZip(distribution, onProgress);
+  const hasZipPackage = Boolean((distribution.zipUrl ?? distribution.package?.url) && (distribution.zipSha256 ?? distribution.package?.sha256));
+  if (hasZipPackage) {
+    await installFromZip(distribution, onProgress);
+  }
+  if (!files.length) {
+    return distribution.zipSha256 ?? distribution.package?.sha256 ?? computeManifestHash(distribution);
+  }
 
   const gameDir = resolveGameDir(distribution.instanceId);
   const tmpDir = path.join(getInstanceDir(), 'tmp', distribution.instanceId);
@@ -419,6 +425,7 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
   const distribution = await fetchDistribution();
   validateManifestForInstall(distribution);
   const mcVersion = getMcVersion(distribution);
+  const gameDir = resolveGameDir(distribution.instanceId);
 
   log.info('[game] install start', {
     manifestUrl: DISTRIBUTION_URL,
@@ -435,12 +442,14 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
   onProgress({ stage: 'verifying', message: 'Проверка файлов...' });
 
   if (targetHash && currentMeta?.installedSha256 === targetHash) {
+    await ensureAuthMods(gameDir);
     log.info('[game] install skipped: already up to date', { instanceId: distribution.instanceId });
     onProgress({ stage: 'done', percent: 100, message: 'Клиент уже актуален' });
     return;
   }
 
   const installedSha256 = await installFromFiles(distribution, onProgress);
+  await ensureAuthMods(gameDir);
 
   const meta: InstallMeta = {
     installedSha256,
@@ -847,6 +856,7 @@ async function launchWithJavaProcess(
     classPathEntriesCount,
     joinTokenLen: joinToken.length,
     joinTokenFp: tokenFingerprint(joinToken),
+    joinTokenJvmArgPresent: jvmArgs.some((arg) => arg.startsWith('-Dbloodcraft.joinToken=')),
     authChannel: AUTH_CHANNEL,
     jvmArgsMasked: maskSensitiveArgs(jvmArgs),
     gameArgsMasked: maskSensitiveArgs(gameArgs),
