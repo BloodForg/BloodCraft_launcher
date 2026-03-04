@@ -36,11 +36,11 @@ const AUTH_CHANNEL = 'bloodcraft:auth';
 const AUTH_HOSTS_DEFAULT = 'thebloodcraft.ru,mc.thebloodcraft.ru,46.181.94.25';
 const AUTH_CLIENT_MOD_FILE = 'bloodcraft-auth-client-1.0.0.jar';
 const AUTH_CLIENT_MOD_URL = 'https://thebloodcraft.ru/launcher/files/bloodcraft-auth-client-1.0.0.jar';
-const AUTH_CLIENT_MOD_SHA256 = 'fbfa4607c5d99fae1ad2528cdbf1e6b7d6d33dc6a36133544616f5674c45e506';
+const AUTH_CLIENT_MOD_SHA256 = '77ca4df0b5ae37212341ec6fbb415db447e80c5225316b6a3bdd12a4704985f0';
 const FABRIC_API_MOD_FILE = 'fabric-api-0.141.3+1.21.11.jar';
 const FABRIC_API_MOD_URL =
   'https://thebloodcraft.ru/launcher/files/fabric-api-0.141.3+1.21.11.jar';
-const FABRIC_API_MOD_SHA256 = '462d688976d93e61658d3045e660db20c2a7c2c912b22a6926db22c8c23321ef';
+const FABRIC_API_MOD_SHA256 = '86c453a86139662e775697d03b0ca7867f547374868c0cb3e3dc06f98dbfeef5';
 const JAVA_LAUNCH_LOG_LIMIT = 200;
 
 function getMcVersion(distribution: Distribution): string {
