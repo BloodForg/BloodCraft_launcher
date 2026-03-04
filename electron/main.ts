@@ -228,7 +228,7 @@ const setupUpdater = () => {
 
   autoUpdater.logger = log;
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.autoInstallOnAppQuit = true;
 
   const updateFeedUrl = resolveUpdateFeedUrl();
   autoUpdater.setFeedURL({
@@ -466,28 +466,8 @@ app.whenReady().then(() => {
       restartFallbackTimer = null;
     }
 
-    setImmediate(() => {
-      log.info('[updater] calling quitAndInstall');
-      autoUpdater.quitAndInstall(false, true);
-      restartFallbackTimer = setTimeout(async () => {
-        if (isQuitting) {
-          // app is still alive after expected quit, updater apply likely failed.
-          const shipItLogs = await readShipItLogs();
-          sendUpdaterState({
-            status: 'error',
-            message: 'Обновление скачано, но macOS не смог применить его.'
-          });
-          if (shipItLogs.trim()) {
-            mainWindow?.webContents.send('updater:shipit-log', shipItLogs);
-          }
-          log.error('[updater] apply failed: app still running after quitAndInstall', {
-            appVersion: app.getVersion(),
-            execPath: process.execPath
-          });
-        }
-      }, 8000);
-    });
-
+    log.info('[updater] restart via app.quit (autoInstallOnAppQuit=true)');
+    app.quit();
     return { ok: true };
   });
 

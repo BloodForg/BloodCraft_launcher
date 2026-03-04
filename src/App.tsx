@@ -345,13 +345,7 @@ function App() {
                       setRestartFailed(true);
                       return;
                     }
-                    if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
-                    restartTimerRef.current = window.setTimeout(() => {
-                      setRestarting(false);
-                      setRestartFailed(true);
-                      setBottomStatus('Обновление скачано, но macOS не смог применить его.');
-                      addToast('Обновление скачано, но macOS не смог применить его.');
-                    }, 8000);
+                    setBottomStatus('Закрываем лаунчер для установки обновления...');
                   }}
                 >
                   {restarting ? 'Перезапуск...' : 'Перезапустить'}
