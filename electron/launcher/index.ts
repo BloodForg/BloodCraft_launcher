@@ -39,8 +39,8 @@ const AUTH_CLIENT_MOD_URL = 'https://thebloodcraft.ru/launcher/files/bloodcraft-
 const AUTH_CLIENT_MOD_SHA256 = 'fbfa4607c5d99fae1ad2528cdbf1e6b7d6d33dc6a36133544616f5674c45e506';
 const FABRIC_API_MOD_FILE = 'fabric-api-0.141.3+1.21.11.jar';
 const FABRIC_API_MOD_URL =
-  'https://maven.fabricmc.net/net/fabricmc/fabric-api/fabric-api/0.115.1+1.21.1/fabric-api-0.115.1+1.21.1.jar';
-const FABRIC_API_MOD_SHA256 = '86c453a86139662e775697d03b0ca7867f547374868c0cb3e3dc06f98dbfeef5';
+  'https://thebloodcraft.ru/launcher/files/fabric-api-0.141.3+1.21.11.jar';
+const FABRIC_API_MOD_SHA256 = '462d688976d93e61658d3045e660db20c2a7c2c912b22a6926db22c8c23321ef';
 const JAVA_LAUNCH_LOG_LIMIT = 200;
 
 function getMcVersion(distribution: Distribution): string {
@@ -75,6 +75,7 @@ async function readJsonSafe<T>(filePath: string): Promise<T | null> {
     return null;
   }
 }
+async function fileExists(filePath: string): Promise<boolean> {  try {    await fs.access(filePath);    return true;  } catch {    return false;  }}
 
 async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
   const tmpPath = `${filePath}.tmp`;
@@ -354,11 +355,18 @@ async function installFromZip(distribution: Distribution, onProgress: (progress:
   return zipSha;
 }
 
-async function installFromFiles(distribution: Distribution, onProgress: (progress: InstallProgress) => void): Promise<string> {
+async function installFromFiles(
+  distribution: Distribution,
+  onProgress: (progress: InstallProgress) => void,
+  options?: { skipZipInstall?: boolean }
+): Promise<string> {
   const files = distribution.files ?? [];
   const hasZipPackage = Boolean((distribution.zipUrl ?? distribution.package?.url) && (distribution.zipSha256 ?? distribution.package?.sha256));
-  if (hasZipPackage) {
+  const skipZipInstall = options?.skipZipInstall === true;
+  if (hasZipPackage && !skipZipInstall) {
     await installFromZip(distribution, onProgress);
+  } else if (hasZipPackage && skipZipInstall) {
+    log.info("[game] zip install skipped: using existing client files", { instanceId: distribution.instanceId });
   }
   if (!files.length) {
     return distribution.zipSha256 ?? distribution.package?.sha256 ?? computeManifestHash(distribution);
@@ -436,6 +444,13 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
   const instanceDir = getInstanceDir();
   const metaPath = getMetaPath();
   const currentMeta = await readJsonSafe<InstallMeta>(metaPath);
+  const launchMetaPath = path.join(gameDir, 'runtime', 'meta', 'launch.json');
+  const hasExistingClient = await fileExists(launchMetaPath);
+  const canDoIncrementalInstall = Boolean(
+    hasExistingClient &&
+      currentMeta?.instanceId === distribution.instanceId &&
+      currentMeta?.mcVersion === mcVersion
+  );
   const targetHash = distribution.files?.length ? computeManifestHash(distribution) : (distribution.zipSha256 ?? distribution.package?.sha256);
 
   await ensureDir(instanceDir);
@@ -448,7 +463,9 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
     return;
   }
 
-  const installedSha256 = await installFromFiles(distribution, onProgress);
+  const installedSha256 = await installFromFiles(distribution, onProgress, {
+    skipZipInstall: canDoIncrementalInstall
+  });
   await ensureAuthMods(gameDir);
 
   const meta: InstallMeta = {
