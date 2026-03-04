@@ -18,7 +18,7 @@ export const updateService = {
     if (!window.bloodcraft?.updater) return false;
     return window.bloodcraft.updater.download();
   },
-  restart: async (): Promise<{ ok: boolean; reason?: 'not-downloaded' }> => {
+  restart: async (): Promise<{ ok: boolean; reason?: 'not-downloaded' | 'running-from-dmg' }> => {
     if (!window.bloodcraft?.updater) return { ok: false };
     return window.bloodcraft.updater.restart();
   },

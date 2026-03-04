@@ -330,8 +330,18 @@ function App() {
                     const result = await updateService.restart();
                     if (!result.ok) {
                       setRestarting(false);
-                      setBottomStatus('Перезапуск не удался — откройте приложение заново');
-                      addToast(result.reason === 'not-downloaded' ? 'Обновление ещё не скачано' : 'Перезапуск не удался');
+                      setBottomStatus(
+                        result.reason === 'running-from-dmg'
+                          ? 'Лаунчер запущен из DMG. Переместите его в /Applications и перезапустите.'
+                          : 'Перезапуск не удался — откройте приложение заново'
+                      );
+                      addToast(
+                        result.reason === 'not-downloaded'
+                          ? 'Обновление ещё не скачано'
+                          : result.reason === 'running-from-dmg'
+                            ? 'Запустите лаунчер из /Applications, а не из DMG'
+                            : 'Перезапуск не удался'
+                      );
                       setRestartFailed(true);
                       return;
                     }

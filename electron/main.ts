@@ -33,6 +33,18 @@ let lastProgressAt = 0;
 let queuedProgress: InstallProgress | null = null;
 let progressTimer: NodeJS.Timeout | null = null;
 const PROGRESS_THROTTLE_MS = 120;
+const DEFAULT_UPDATE_FEED_URL = "https://thebloodcraft.ru/launcher/updates/";
+
+function normalizeUpdateFeedUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return DEFAULT_UPDATE_FEED_URL;
+  return trimmed.endsWith("/") ? trimmed : trimmed + "/";
+}
+
+function resolveUpdateFeedUrl(): string {
+  const fromEnv = process.env.BLOODCRAFT_UPDATER_URL || process.env.UPDATER_URL || process.env.AUTO_UPDATE_URL || "";
+  return normalizeUpdateFeedUrl(fromEnv || DEFAULT_UPDATE_FEED_URL);
+}
 
 function toErrorDetails(error: unknown): {
   message: string;
@@ -204,6 +216,10 @@ const isUpdater404LatestMac = (error: unknown): boolean => {
   return normalized.includes('latest-mac.yml') && normalized.includes('404');
 };
 
+const isRunningFromMountedDmg = (): boolean => {
+  return process.platform === 'darwin' && process.execPath.startsWith('/Volumes/');
+};
+
 const setupUpdater = () => {
   if (!app.isPackaged) {
     log.info('[updater] skipped: app is not packaged');
@@ -213,6 +229,17 @@ const setupUpdater = () => {
   autoUpdater.logger = log;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+
+  const updateFeedUrl = resolveUpdateFeedUrl();
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: updateFeedUrl,
+  });
+
+  log.info("[updater] feed configured", {
+    provider: "generic",
+    url: updateFeedUrl,
+  });
 
   log.info('[updater] app version', app.getVersion());
 
@@ -423,6 +450,15 @@ app.whenReady().then(() => {
       return { ok: false, reason: 'not-downloaded' as const };
     }
 
+    if (isRunningFromMountedDmg()) {
+      log.warn('[updater] restart denied: app is running from mounted dmg', { execPath: process.execPath });
+      sendUpdaterState({
+        status: 'error',
+        message: 'Лаунчер запущен из DMG. Переместите его в /Applications и запустите оттуда.'
+      });
+      return { ok: false, reason: 'running-from-dmg' as const };
+    }
+
     isQuitting = true;
     app.removeAllListeners('window-all-closed');
     if (restartFallbackTimer) {
@@ -432,7 +468,7 @@ app.whenReady().then(() => {
 
     setImmediate(() => {
       log.info('[updater] calling quitAndInstall');
-      autoUpdater.quitAndInstall(true, true);
+      autoUpdater.quitAndInstall(false, true);
       restartFallbackTimer = setTimeout(async () => {
         if (isQuitting) {
           // app is still alive after expected quit, updater apply likely failed.

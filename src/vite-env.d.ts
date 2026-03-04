@@ -92,7 +92,7 @@ declare global {
         getStatus: () => Promise<UpdaterStatus>;
         check: () => Promise<boolean>;
         download: () => Promise<boolean>;
-        restart: () => Promise<{ ok: boolean; reason?: 'not-downloaded' }>;
+        restart: () => Promise<{ ok: boolean; reason?: 'not-downloaded' | 'running-from-dmg' }>;
         shipitLogs: () => Promise<string>;
         openUpdateFolder: () => Promise<string>;
         onStatus: (cb: (status: UpdaterStatus) => void) => () => void;
