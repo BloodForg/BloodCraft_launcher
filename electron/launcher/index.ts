@@ -747,7 +747,7 @@ async function launchWithJavaProcess(
   const maxMem = Math.max(minMem, options?.maxMemoryGb ?? 4);
   const assetsRoot = path.join(gameDir, 'runtime', 'assets');
   const assetIndexName = await resolveAssetIndexName(gameDir, mcVersion);
-  const launcherGameDir = path.join(getInstanceDir(), 'game');
+  const launcherGameDir = gameDir;
   const { username, uuid } = resolveLaunchIdentity(options?.username, options?.uuid);
 
   const distJvmArgs = (distribution.launch?.jvmArgs ?? []).map((arg) =>
