@@ -446,11 +446,7 @@ export async function install(onProgress: (progress: InstallProgress) => void): 
   const currentMeta = await readJsonSafe<InstallMeta>(metaPath);
   const launchMetaPath = path.join(gameDir, 'runtime', 'meta', 'launch.json');
   const hasExistingClient = await fileExists(launchMetaPath);
-  const canDoIncrementalInstall = Boolean(
-    hasExistingClient &&
-      currentMeta?.instanceId === distribution.instanceId &&
-      currentMeta?.mcVersion === mcVersion
-  );
+  const canDoIncrementalInstall = hasExistingClient;
   const targetHash = distribution.files?.length ? computeManifestHash(distribution) : (distribution.zipSha256 ?? distribution.package?.sha256);
 
   await ensureDir(instanceDir);
