@@ -227,7 +227,7 @@ const setupUpdater = () => {
   }
 
   autoUpdater.logger = log;
-  autoUpdater.autoDownload = false;
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   const updateFeedUrl = resolveUpdateFeedUrl();
@@ -254,7 +254,7 @@ const setupUpdater = () => {
   autoUpdater.on('update-available', (info) => {
     updateDownloaded = false;
     log.info('[updater] update-available', { version: info?.version, files: info?.files?.map((f) => f.url) });
-    sendUpdaterState({ status: 'available', version: info?.version, message: `Доступно обновление ${info?.version}` });
+    sendUpdaterState({ status: 'downloading', version: info?.version, message: `Скачиваем обновление ${info?.version}...` });
   });
   autoUpdater.on('update-not-available', (info) => {
     log.info('[updater] update-not-available', { version: info?.version, updateDownloaded });
@@ -278,6 +278,11 @@ const setupUpdater = () => {
     sendUpdaterState({ status: 'downloaded', message: `Обновление ${info?.version} скачано` });
   });
   autoUpdater.on('error', (error) => {
+    if (updateDownloaded) {
+      log.warn('[updater] error after download; keeping downloaded state', { message: error instanceof Error ? error.message : String(error) });
+      sendUpdaterState({ status: 'downloaded', message: updaterState.message || 'Обновление скачано' });
+      return;
+    }
     if (isUpdater404LatestMac(error)) {
       log.warn('[updater] latest-mac.yml not found (treated as no updates)', error);
       sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
