@@ -71,6 +71,11 @@ function App() {
   const restartTimerRef = useRef<number | null>(null);
 
   const handlePlayClick = () => {
+    if (updater.status === 'downloaded' || restarting) {
+      setBottomStatus('Сначала перезапустите лаунчер для установки обновления');
+      addToast('Сначала нажмите «Перезапустить» для применения обновления');
+      return;
+    }
     console.log('[ui] play click');
     void logService.info('[ui] play click');
     void playSelectedServer();
