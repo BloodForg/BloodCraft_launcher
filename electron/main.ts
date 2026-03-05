@@ -245,6 +245,10 @@ const setupUpdater = () => {
 
   autoUpdater.on('checking-for-update', () => {
     log.info('[updater] checking-for-update');
+    if (updateDownloaded) {
+      log.info('[updater] keeping downloaded state during re-check');
+      return;
+    }
     sendUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
   });
   autoUpdater.on('update-available', (info) => {
@@ -253,7 +257,11 @@ const setupUpdater = () => {
     sendUpdaterState({ status: 'available', version: info?.version, message: `Доступно обновление ${info?.version}` });
   });
   autoUpdater.on('update-not-available', (info) => {
-    log.info('[updater] update-not-available', { version: info?.version });
+    log.info('[updater] update-not-available', { version: info?.version, updateDownloaded });
+    if (updateDownloaded) {
+      sendUpdaterState({ status: 'downloaded', message: updaterState.message || 'Обновление скачано' });
+      return;
+    }
     sendUpdaterState({ status: 'not-available', message: 'Обновлений нет', progress: 0 });
   });
   autoUpdater.on('download-progress', (progressObj) => {
@@ -466,8 +474,27 @@ app.whenReady().then(() => {
       restartFallbackTimer = null;
     }
 
-    log.info('[updater] restart via app.quit (autoInstallOnAppQuit=true)');
-    app.quit();
+    setImmediate(() => {
+      log.info('[updater] calling quitAndInstall');
+      autoUpdater.quitAndInstall(false, true);
+      restartFallbackTimer = setTimeout(async () => {
+        if (isQuitting) {
+          const shipItLogs = await readShipItLogs();
+          sendUpdaterState({
+            status: 'error',
+            message: 'Обновление скачано, но macOS не смог применить его.'
+          });
+          if (shipItLogs.trim()) {
+            mainWindow?.webContents.send('updater:shipit-log', shipItLogs);
+          }
+          log.error('[updater] apply failed: app still running after quitAndInstall', {
+            appVersion: app.getVersion(),
+            execPath: process.execPath
+          });
+        }
+      }, 8000);
+    });
+
     return { ok: true };
   });
 
