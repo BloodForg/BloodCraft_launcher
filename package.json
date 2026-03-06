@@ -1,6 +1,6 @@
 {
   "name": "bloodcraft-launcher",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -93,6 +93,7 @@
       ],
       "icon": "build/icon.png",
       "artifactName": "BloodCraft.exe"
-    }
+    },
+    "afterPack": "scripts/after-pack-fix-perms.cjs"
   }
 }

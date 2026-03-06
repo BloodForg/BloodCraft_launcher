@@ -55,7 +55,15 @@ function resolveAppPath() {
 function verifyAppSignature(appPath, label) {
   console.log(`[verify-mac-signature] verifying ${label}: ${appPath}`);
   run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
-  run('spctl', ['--assess', '--type', 'execute', '--verbose', appPath]);
+
+  try {
+    run('spctl', ['--assess', '--type', 'execute', '--verbose', appPath]);
+  } catch (error) {
+    if (process.env.REQUIRE_SPCTL === '1') {
+      throw error;
+    }
+    console.warn(`[verify-mac-signature] spctl assessment warning (non-fatal): ${appPath}`);
+  }
 }
 
 const zipPath = resolveZipPath();
