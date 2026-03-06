@@ -1,49 +1,51 @@
-name: Build macOS DMG and Upload to VDS
+name: Sync macOS Release Assets to VDS
 
 on:
-  push:
-    tags:
-      - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to sync (example: v1.2.6)'
+        required: true
+        type: string
 
 jobs:
-  build-and-upload-mac:
-    runs-on: macos-latest
+  sync-macos-assets:
+    runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js (LTS)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Fetch bundled JRE 21 (macOS arm64)
-        run: npm run fetch:jre
-
-      - name: Guard appId / bundleIdentifier
-        run: npm run guard:appid
-
-      - name: Build app
-        run: npm run build
-
-      - name: Build macOS DMG
-        shell: bash
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run dist:mac
-
-      - name: Verify DMG artifact
+      - name: Resolve tag
+        id: ref
         shell: bash
         run: |
           set -euo pipefail
-          test -s release/BloodCraft.dmg
-          ls -lah release/BloodCraft.dmg
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download release assets
+        uses: robinraju/release-downloader@v1.11
+        with:
+          tag: ${{ steps.ref.outputs.tag }}
+          fileName: |
+            BloodCraft-*-arm64-mac.zip
+            BloodCraft-*-arm64-mac.zip.blockmap
+            BloodCraft-*-arm64.dmg
+            BloodCraft-*-arm64.dmg.blockmap
+            latest-mac.yml
+          out-file-path: release-sync
+
+      - name: Validate downloaded artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lah release-sync
+          test -f release-sync/latest-mac.yml
+          test -n "$(find release-sync -maxdepth 1 -name 'BloodCraft-*-arm64-mac.zip' | head -n 1)"
+          test -n "$(find release-sync -maxdepth 1 -name 'BloodCraft-*-arm64.dmg' | head -n 1)"
 
       - name: Setup SSH key
         uses: webfactory/ssh-agent@v0.9.0
@@ -57,10 +59,24 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Upload DMG to VDS
+      - name: Upload updater artifacts to VDS (binary-identical)
         shell: bash
         run: |
           set -euo pipefail
-          ssh -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}" "mkdir -p '${{ secrets.VDS_PATH }}'"
-          scp -P "${{ secrets.VDS_PORT }}" release/BloodCraft.dmg "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:${{ secrets.VDS_PATH }}/BloodCraft.dmg"
-          ssh -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}" "chmod 644 '${{ secrets.VDS_PATH }}/BloodCraft.dmg' && ls -la '${{ secrets.VDS_PATH }}' && test -s '${{ secrets.VDS_PATH }}/BloodCraft.dmg'"
+          VDS_UPDATES_PATH="/var/www/bloodcraft/launcher/updates"
+          VDS_DOWNLOADS_PATH="/var/www/bloodcraft-downloads"
+
+          ZIP_FILE="$(find release-sync -maxdepth 1 -name 'BloodCraft-*-arm64-mac.zip' | head -n 1)"
+          ZIP_BLOCKMAP_FILE="${ZIP_FILE}.blockmap"
+          DMG_FILE="$(find release-sync -maxdepth 1 -name 'BloodCraft-*-arm64.dmg' | head -n 1)"
+          DMG_BLOCKMAP_FILE="${DMG_FILE}.blockmap"
+
+          ssh -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}" "mkdir -p '$VDS_UPDATES_PATH' '$VDS_DOWNLOADS_PATH'"
+
+          scp -P "${{ secrets.VDS_PORT }}" release-sync/latest-mac.yml "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:$VDS_UPDATES_PATH/latest-mac.yml"
+          scp -P "${{ secrets.VDS_PORT }}" "$ZIP_FILE" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:$VDS_UPDATES_PATH/$(basename "$ZIP_FILE")"
+          scp -P "${{ secrets.VDS_PORT }}" "$ZIP_BLOCKMAP_FILE" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:$VDS_UPDATES_PATH/$(basename "$ZIP_BLOCKMAP_FILE")"
+          scp -P "${{ secrets.VDS_PORT }}" "$DMG_FILE" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:$VDS_UPDATES_PATH/$(basename "$DMG_FILE")"
+          scp -P "${{ secrets.VDS_PORT }}" "$DMG_BLOCKMAP_FILE" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}:$VDS_UPDATES_PATH/$(basename "$DMG_BLOCKMAP_FILE")"
+
+          ssh -p "${{ secrets.VDS_PORT }}" "${{ secrets.VDS_USER }}@${{ secrets.VDS_HOST }}" "set -euo pipefail; chmod 644 '$VDS_UPDATES_PATH/latest-mac.yml' '$VDS_UPDATES_PATH/$(basename "$ZIP_FILE")' '$VDS_UPDATES_PATH/$(basename "$ZIP_BLOCKMAP_FILE")' '$VDS_UPDATES_PATH/$(basename "$DMG_FILE")' '$VDS_UPDATES_PATH/$(basename "$DMG_BLOCKMAP_FILE")'; cp -f '$VDS_UPDATES_PATH/$(basename "$DMG_FILE")' '$VDS_DOWNLOADS_PATH/BloodCraft.dmg'; cp -f '$VDS_UPDATES_PATH/$(basename "$DMG_FILE")' '$VDS_DOWNLOADS_PATH/BloodCraftLauncher-macos-arm64.dmg'; chmod 644 '$VDS_DOWNLOADS_PATH/BloodCraft.dmg' '$VDS_DOWNLOADS_PATH/BloodCraftLauncher-macos-arm64.dmg'; ls -lah '$VDS_UPDATES_PATH/latest-mac.yml' '$VDS_UPDATES_PATH/$(basename "$ZIP_FILE")' '$VDS_UPDATES_PATH/$(basename "$DMG_FILE")' '$VDS_DOWNLOADS_PATH/BloodCraft.dmg'"
