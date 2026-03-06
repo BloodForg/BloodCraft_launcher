@@ -409,12 +409,27 @@ export async function refreshSession(): Promise<AuthSession> {
   return { accessToken: parsed.accessToken, user };
 }
 
-export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
-  if (!accessToken) {
-    throw buildAuthError({ code: 'UNAUTHORIZED', message: 'Нет активной сессии' });
+async function ensureAccessTokenForJoin(): Promise<void> {
+  if (accessToken) return;
+  try {
+    const session = await refreshSession();
+    accessToken = session.accessToken;
+    log.info('[auth] access token restored via refresh before join-token', {
+      tokenFp: tokenFingerprint(accessToken)
+    });
+  } catch (error) {
+    const mapped = mapAuthError(error);
+    log.warn('[auth] refresh before join-token failed', mapped);
+    throw buildAuthError({ code: 'UNAUTHORIZED', message: 'Нужно войти в аккаунт' });
   }
+}
 
-  for (let attempt = 0; attempt <= JOIN_TOKEN_RETRIES; attempt += 1) {
+export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
+  await ensureAccessTokenForJoin();
+
+  let refreshedOnce = false;
+
+  for (let attempt = 0; attempt <= JOIN_TOKEN_RETRIES + 1; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('timeout'), JOIN_TOKEN_TIMEOUT_MS);
     try {
@@ -447,8 +462,21 @@ export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
       });
 
       if (!response.ok) {
+        const unauthorized = response.status === 401 || response.status === 403;
+        if (unauthorized && !refreshedOnce) {
+          refreshedOnce = true;
+          log.warn('[auth] join-token unauthorized, trying refresh once');
+          const session = await refreshSession();
+          accessToken = session.accessToken;
+          continue;
+        }
+
+        if (unauthorized) {
+          throw buildAuthError({ code: 'UNAUTHORIZED', message: 'Нужно войти в аккаунт', status: response.status, url: AUTH_JOIN_TOKEN_URL });
+        }
+
         throw buildAuthError({
-          code: response.status === 401 || response.status === 403 ? 'UNAUTHORIZED' : response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
+          code: response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
           message:
             typeof payload.reason === 'string'
               ? payload.reason
@@ -463,10 +491,7 @@ export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
       const token = typeof payload.token === 'string' ? payload.token : '';
       const expiresIn = typeof payload.expiresIn === 'number' ? payload.expiresIn : 0;
       if (!token || !expiresIn) {
-        throw buildAuthError({
-          code: 'INVALID_RESPONSE',
-          message: 'Некорректный ответ join-token endpoint'
-        });
+        throw buildAuthError({ code: 'INVALID_RESPONSE', message: 'Некорректный ответ join-token endpoint' });
       }
 
       log.info('[auth] join-token received', {
@@ -477,23 +502,75 @@ export async function fetchJoinTokenForLaunch(): Promise<JoinTokenPayload> {
       });
       return { token, expiresIn };
     } catch (error) {
-      const mapped = error instanceof Error ? error : buildAuthError(classifyNetworkError(error));
+      const mapped = mapAuthError(error);
       log.warn('[auth] join-token request failed', {
         attempt: attempt + 1,
-        name: mapped.name,
+        code: mapped.code,
         message: mapped.message,
-        stack: mapped.stack
+        status: mapped.status
       });
-      if (attempt < JOIN_TOKEN_RETRIES) {
-        continue;
+
+      if (mapped.code === 'UNAUTHORIZED' && !refreshedOnce) {
+        refreshedOnce = true;
+        try {
+          const session = await refreshSession();
+          accessToken = session.accessToken;
+          continue;
+        } catch {
+          throw buildAuthError({ code: 'UNAUTHORIZED', message: 'Нужно войти в аккаунт' });
+        }
       }
-      throw mapped;
+
+      if (attempt < JOIN_TOKEN_RETRIES) continue;
+      throw buildAuthError(mapped);
     } finally {
       clearTimeout(timer);
     }
   }
 
   throw buildAuthError({ code: 'UNKNOWN', message: 'join-token request failed' });
+}
+
+export async function verifyJoinTokenPreflight(token: string): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), JOIN_TOKEN_TIMEOUT_MS);
+  try {
+    log.info('[auth] verify-join preflight started');
+    const response = await fetch(`${AUTH_BASE_URL}/api/auth/verify-join`, {
+      method: 'POST',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ token })
+    });
+    const text = await response.text();
+    log.info('[auth] verify-join preflight response', {
+      status: response.status,
+      ok: response.ok,
+      bodyPreview: sanitizePreview(text)
+    });
+    if (!response.ok) {
+      throw buildAuthError({
+        code: response.status === 401 || response.status === 403 ? 'UNAUTHORIZED' : response.status >= 500 ? 'SERVICE_UNAVAILABLE' : 'UNKNOWN',
+        message: 'Проверка авторизации перед запуском не пройдена',
+        status: response.status,
+        url: `${AUTH_BASE_URL}/api/auth/verify-join`
+      });
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function setAccessTokenForOps(token: string | null): void {
+  accessToken = token && token.trim() ? token.trim() : null;
+  log.info('[auth] access token set by ops hook', {
+    present: Boolean(accessToken),
+    tokenFp: accessToken ? tokenFingerprint(accessToken) : 'none'
+  });
 }
 
 export async function logoutSession(): Promise<void> {

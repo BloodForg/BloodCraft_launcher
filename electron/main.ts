@@ -7,7 +7,7 @@ import log from 'electron-log';
 import updaterPkg from 'electron-updater';
 import { fetchDistribution, getStatus, install, launch } from './launcher/index.js';
 import type { InstallProgress } from './launcher/types.js';
-import { devSelfCheck, fetchJoinTokenForLaunch, loginWithSite, logoutSession, mapAuthError, me, refreshSession, runNetworkDiagnostics } from './authService.js';
+import { devSelfCheck, fetchJoinTokenForLaunch, loginWithSite, logoutSession, mapAuthError, me, refreshSession, runNetworkDiagnostics, setAccessTokenForOps, verifyJoinTokenPreflight } from './authService.js';
 
 const { autoUpdater } = updaterPkg as unknown as {
   autoUpdater: import('electron-updater').AppUpdater;
@@ -220,6 +220,50 @@ const isRunningFromMountedDmg = (): boolean => {
   return process.platform === 'darwin' && process.execPath.startsWith('/Volumes/');
 };
 
+async function runHeadlessSelfcheck(): Promise<void> {
+  const accessToken = (process.env.BLOODCRAFT_TEST_ACCESS_TOKEN || '').trim();
+  const username = (process.env.BLOODCRAFT_TEST_USERNAME || 'BloodForg').trim();
+  const uuid = (process.env.BLOODCRAFT_TEST_UUID || '05e43929-3af9-33de-90cd-5be2611720b7').trim();
+
+  if (!accessToken) {
+    throw new Error('BLOODCRAFT_TEST_ACCESS_TOKEN is required for headless selfcheck');
+  }
+
+  log.info('[selfcheck] headless selfcheck started');
+  setAccessTokenForOps(accessToken);
+
+  const diagnostics = await runNetworkDiagnostics();
+  log.info('[selfcheck] network diagnostics', diagnostics);
+  if (!diagnostics.ok) {
+    throw new Error(`Selfcheck failed: ${diagnostics.summary}`);
+  }
+
+  const preflightToken = await fetchJoinTokenForLaunch();
+  await verifyJoinTokenPreflight(preflightToken.token);
+
+  const launchToken = await fetchJoinTokenForLaunch();
+  log.info('[selfcheck] launch token ready', {
+    tokenLen: launchToken.token.length,
+    expiresIn: launchToken.expiresIn
+  });
+
+  await install((progress) => {
+    log.info('[selfcheck] install progress', progress);
+  });
+
+  await launch((progress) => {
+    log.info('[selfcheck] launch progress', progress);
+  }, {
+    username,
+    uuid,
+    joinToken: launchToken.token
+  });
+
+  log.info('[selfcheck] launch invoked successfully');
+  await new Promise((resolve) => setTimeout(resolve, 45000));
+  log.info('[selfcheck] post-launch wait finished');
+}
+
 const setupUpdater = () => {
   if (!app.isPackaged) {
     log.info('[updater] skipped: app is not packaged');
@@ -293,13 +337,25 @@ const setupUpdater = () => {
   });
 };
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   log.transports.file.level = 'info';
   log.info('[main] app ready');
   log.info('APP VERSION:', app.getVersion());
   setupUpdater();
   if (isDev) {
     void devSelfCheck();
+  }
+
+  if (process.env.BLOODCRAFT_HEADLESS_SELFCHECK === '1') {
+    try {
+      await runHeadlessSelfcheck();
+      app.exit(0);
+    } catch (error) {
+      const details = toErrorDetails(error);
+      log.error('[selfcheck] failed', details);
+      app.exit(1);
+    }
+    return;
   }
 
   ipcMain.handle('shell:openExternal', async (_event, url: string) => {
@@ -553,11 +609,21 @@ app.whenReady().then(() => {
   ipcMain.handle('launcher:launch', async (_event, options?: { javaPath?: string; minMemoryGb?: number; maxMemoryGb?: number; username?: string; uuid?: string }) => {
     log.info('[ipc] launcher:launch invoked', options ?? {});
     try {
+      const diagnostics = await runNetworkDiagnostics();
+      if (!diagnostics.ok) {
+        throw new Error(`Selfcheck failed: ${diagnostics.summary}`);
+      }
+
+      const preflightToken = await fetchJoinTokenForLaunch();
+      await verifyJoinTokenPreflight(preflightToken.token);
+
       const joinToken = await fetchJoinTokenForLaunch();
       log.info('[ipc] launcher:launch auth ready', {
+        preflightTokenLen: preflightToken.token.length,
         joinTokenExpiresIn: joinToken.expiresIn,
         hasJoinToken: Boolean(joinToken.token)
       });
+
       await launch((progress: InstallProgress) => emitProgress(progress), {
         ...options,
         joinToken: joinToken.token
