@@ -47,7 +47,7 @@ type UpdaterStatus = {
 
 type InstallUpdateResult = {
   ok: boolean;
-  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'unknown';
+  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'security-check-failed' | 'unknown';
 };
 
 type NetworkDiagnostics = {

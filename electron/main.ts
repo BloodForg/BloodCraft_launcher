@@ -23,24 +23,37 @@ let installInProgress = false;
 let isQuitting = false;
 
 const PROGRESS_THROTTLE_MS = 120;
-const UPDATE_MANIFEST_URL = 'https://thebloodcraft.ru/launcher/updates/latest.json';
+const UPDATE_MANIFEST_BASE_URL = 'https://thebloodcraft.ru/launcher/updates';
 const UPDATE_DOWNLOAD_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'BloodCraft', 'updates');
+const UPDATE_TMP_DIR = path.join(UPDATE_DOWNLOAD_DIR, 'tmp');
+const UPDATE_TMP_FILE_PATH = path.join(UPDATE_TMP_DIR, 'update.tmp');
+const UPDATE_ZIP_FILE_PATH = path.join(UPDATE_DOWNLOAD_DIR, 'BloodCraft-mac.zip');
 const UPDATER_LOG_PATH = path.join(os.homedir(), 'Library', 'Logs', 'bloodcraft-launcher', 'updater.log');
 const MAC_APP_BACKUP_PATH = '/Applications/BloodCraft.app.backup';
 const EXPECTED_VERSION_PATH = path.join(os.homedir(), 'Library', 'Application Support', 'BloodCraft', 'updates', 'expected-version.txt');
 
 type CustomUpdateStatus = 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
+type UpdateChannel = 'stable' | 'beta' | 'dev';
 
 type LatestManifest = {
   version: string;
+  channel?: UpdateChannel;
   url: string;
   sha256: string;
+  size?: number;
   minBootstrapVersion?: string;
+  rolloutPercentage?: number;
+  delta?: {
+    baseVersion: string;
+    url: string;
+    sha256: string;
+    size?: number;
+  };
 };
 
 type InstallUpdateResult = {
   ok: boolean;
-  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'unknown';
+  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'security-check-failed' | 'unknown';
 };
 
 let updaterState: {
@@ -75,6 +88,30 @@ function compareVersions(left: string, right: string): number {
     if (lv < rv) return -1;
   }
   return 0;
+}
+
+function resolveUpdateChannel(): UpdateChannel {
+  const raw = (process.env.BLOODCRAFT_UPDATE_CHANNEL || 'stable').toLowerCase();
+  if (raw === 'beta' || raw === 'dev') return raw;
+  return 'stable';
+}
+
+function manifestUrlForChannel(channel: UpdateChannel): string {
+  if (channel === 'stable') return `${UPDATE_MANIFEST_BASE_URL}/latest.json`;
+  return `${UPDATE_MANIFEST_BASE_URL}/latest-${channel}.json`;
+}
+
+function rolloutBucket(): number {
+  const fingerprint = createHash('sha256').update(app.getPath('userData')).digest('hex');
+  return Number.parseInt(fingerprint.slice(0, 8), 16) % 100;
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function toErrorDetails(error: unknown): {
@@ -200,16 +237,6 @@ function createWindow() {
   return win;
 }
 
-function sanitizeFileName(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const base = path.basename(parsed.pathname);
-    return base || 'BloodCraft-mac.zip';
-  } catch {
-    return 'BloodCraft-mac.zip';
-  }
-}
-
 async function hashFileSha256(filePath: string): Promise<string> {
   const hash = createHash('sha256');
   await new Promise<void>((resolve, reject) => {
@@ -267,12 +294,14 @@ async function cleanupBackupAfterSuccessfulStart(): Promise<void> {
 }
 
 async function checkForCustomUpdate(): Promise<{ ok: boolean; available: boolean }> {
+  const channel = resolveUpdateChannel();
+  const manifestUrl = manifestUrlForChannel(channel);
   setUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
-  log.info('[custom-updater] check started', { currentVersion: app.getVersion(), url: UPDATE_MANIFEST_URL });
-  await appendUpdaterLog('checking_for_update', { currentVersion: app.getVersion(), url: UPDATE_MANIFEST_URL });
+  log.info('[custom-updater] check started', { currentVersion: app.getVersion(), url: manifestUrl, channel });
+  await appendUpdaterLog('step=check_start', { currentVersion: app.getVersion(), url: manifestUrl, channel });
 
   try {
-    const response = await axios.get<LatestManifest>(UPDATE_MANIFEST_URL, {
+    const response = await axios.get<LatestManifest>(manifestUrl, {
       timeout: 15000,
       validateStatus: () => true
     });
@@ -282,14 +311,39 @@ async function checkForCustomUpdate(): Promise<{ ok: boolean; available: boolean
     }
 
     const manifest = response.data;
-    const resolvedUrl = new URL(manifest.url, UPDATE_MANIFEST_URL).toString();
-    latestManifest = { ...manifest, url: resolvedUrl };
+    if (manifest.channel && manifest.channel !== channel) {
+      setUpdaterState({ status: 'idle', message: 'Обновление для другого канала', version: app.getVersion(), progress: 0 });
+      await appendUpdaterLog('step=channel_mismatch_skip', { requestedChannel: channel, manifestChannel: manifest.channel });
+      return { ok: true, available: false };
+    }
+    const resolvedUrl = new URL(manifest.url, manifestUrl).toString();
+    if (!isHttpsUrl(resolvedUrl)) {
+      throw new Error('Security policy: update URL must be HTTPS');
+    }
+
+    const minBootstrapVersion = manifest.minBootstrapVersion?.trim();
+    if (minBootstrapVersion && compareVersions(app.getVersion(), minBootstrapVersion) < 0) {
+      const message = 'Эта версия лаунчера слишком старая для автообновления. Требуется переустановка.';
+      setUpdaterState({ status: 'error', message, version: manifest.version, progress: 0 });
+      await appendUpdaterLog('step=bootstrap_blocked', { currentVersion: app.getVersion(), minBootstrapVersion, channel });
+      return { ok: false, available: false };
+    }
+
+    const rolloutPercentage = Math.max(0, Math.min(100, Number(manifest.rolloutPercentage ?? 100)));
+    const bucket = rolloutBucket();
+    if (bucket >= rolloutPercentage) {
+      setUpdaterState({ status: 'idle', message: 'Обновление пока недоступно для вашего канала', version: app.getVersion(), progress: 0 });
+      await appendUpdaterLog('step=rollout_skip', { bucket, rolloutPercentage, channel, version: manifest.version });
+      return { ok: true, available: false };
+    }
+
+    latestManifest = { ...manifest, channel: manifest.channel ?? channel, url: resolvedUrl };
 
     const cmp = compareVersions(manifest.version, app.getVersion());
     if (cmp <= 0) {
       setUpdaterState({ status: 'idle', message: 'У вас последняя версия', version: app.getVersion(), progress: 0 });
       log.info('[custom-updater] no update', { latestVersion: manifest.version });
-      await appendUpdaterLog('no_update_available', { latestVersion: manifest.version });
+      await appendUpdaterLog('step=no_update_available', { latestVersion: manifest.version, channel });
       return { ok: true, available: false };
     }
 
@@ -299,13 +353,13 @@ async function checkForCustomUpdate(): Promise<{ ok: boolean; available: boolean
       version: manifest.version,
       progress: 0
     });
-    log.info('[custom-updater] update found', { latestVersion: manifest.version, url: resolvedUrl });
-    await appendUpdaterLog('update_available', { latestVersion: manifest.version, url: resolvedUrl });
+    log.info('[custom-updater] update found', { latestVersion: manifest.version, url: resolvedUrl, channel });
+    await appendUpdaterLog('step=update_available', { latestVersion: manifest.version, url: resolvedUrl, channel });
     return { ok: true, available: true };
   } catch (error) {
     const details = toErrorDetails(error);
     setUpdaterState({ status: 'error', message: `Ошибка проверки обновлений: ${details.message}` });
-    await appendUpdaterLog('check_failed', { error: details.message });
+    await appendUpdaterLog('step=check_failed', { error: details.message });
     return { ok: false, available: false };
   }
 }
@@ -318,16 +372,31 @@ async function downloadCustomUpdate(): Promise<boolean> {
 
   if (!latestManifest) return false;
 
+  if (!isHttpsUrl(latestManifest.url)) {
+    setUpdaterState({ status: 'error', message: 'Ошибка загрузки обновления: разрешены только HTTPS ссылки' });
+    await appendUpdaterLog('step=download_failed', { reason: 'non_https_url', url: latestManifest.url });
+    return false;
+  }
+
   await fs.mkdir(UPDATE_DOWNLOAD_DIR, { recursive: true });
-  const fileName = sanitizeFileName(latestManifest.url);
-  const finalPath = path.join(UPDATE_DOWNLOAD_DIR, fileName);
-  const tempPath = `${finalPath}.part`;
+  await fs.mkdir(UPDATE_TMP_DIR, { recursive: true });
+  const finalPath = UPDATE_ZIP_FILE_PATH;
+  const tempPath = UPDATE_TMP_FILE_PATH;
 
   setUpdaterState({ status: 'downloading', message: 'Скачивание обновления...', progress: 0, version: latestManifest.version });
-  log.info('[custom-updater] download started', { version: latestManifest.version, url: latestManifest.url, fileName });
-  await appendUpdaterLog('download_start', { version: latestManifest.version, url: latestManifest.url, fileName });
+  log.info('[custom-updater] download started', { version: latestManifest.version, url: latestManifest.url });
+  await appendUpdaterLog('step=download_start', { version: latestManifest.version, url: latestManifest.url, tempPath, finalPath });
+
+  if (latestManifest.delta?.url && latestManifest.delta.baseVersion === app.getVersion()) {
+    await appendUpdaterLog('step=delta_candidate_detected', {
+      currentVersion: app.getVersion(),
+      deltaUrl: latestManifest.delta.url,
+      note: 'fallback_to_full_zip'
+    });
+  }
 
   try {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
     const response = await axios.get(latestManifest.url, {
       responseType: 'stream',
       timeout: 600000,
@@ -351,16 +420,28 @@ async function downloadCustomUpdate(): Promise<boolean> {
 
     await pipeline(response.data, createWriteStream(tempPath));
     log.info('[custom-updater] download finished', { path: tempPath });
+    await appendUpdaterLog('step=download_done', { path: tempPath, bytes: downloadedBytes });
 
     const actualHash = (await hashFileSha256(tempPath)).toLowerCase();
     const expectedHash = latestManifest.sha256.toLowerCase();
+    const stat = await fs.stat(tempPath);
+    const expectedSize = Number(latestManifest.size ?? 0);
+    if (expectedSize > 0 && stat.size !== expectedSize) {
+      await fs.rm(tempPath, { force: true });
+      await appendUpdaterLog('error: corrupted update archive', { reason: 'size_mismatch', expectedSize, actualSize: stat.size });
+      throw new Error(`corrupted update archive: size mismatch expected=${expectedSize} actual=${stat.size}`);
+    }
     if (actualHash !== expectedHash) {
       await fs.rm(tempPath, { force: true });
-      throw new Error(`SHA256 mismatch expected=${expectedHash} actual=${actualHash}`);
+      await appendUpdaterLog('error: corrupted update archive', { reason: 'sha256_mismatch', expectedHash, actualHash });
+      throw new Error(`corrupted update archive: SHA256 mismatch expected=${expectedHash} actual=${actualHash}`);
     }
     log.info('[custom-updater] hash verified', { sha256: actualHash });
+    await appendUpdaterLog('step=hash_verified', { sha256: actualHash, size: stat.size });
 
+    await fs.rm(finalPath, { force: true }).catch(() => undefined);
     await fs.rename(tempPath, finalPath);
+    await appendUpdaterLog('step=download_promoted', { from: tempPath, to: finalPath });
 
     downloadedZipPath = finalPath;
     setUpdaterState({
@@ -370,26 +451,28 @@ async function downloadCustomUpdate(): Promise<boolean> {
       version: latestManifest.version,
       filePath: finalPath
     });
-    await appendUpdaterLog('download_ok', { version: latestManifest.version, path: finalPath, sha256: actualHash });
+    await appendUpdaterLog('step=download_ok', { version: latestManifest.version, path: finalPath, sha256: actualHash });
     return true;
   } catch (error) {
     const details = toErrorDetails(error);
     setUpdaterState({ status: 'error', message: `Ошибка загрузки обновления: ${details.message}` });
-    await appendUpdaterLog('download_failed', { error: details.message });
+    await appendUpdaterLog('step=download_failed', { error: details.message });
     await fs.rm(tempPath, { force: true }).catch(() => undefined);
     return false;
   }
 }
 
 async function installCustomUpdate(): Promise<InstallUpdateResult> {
-  if (!downloadedZipPath) {
+  if (!downloadedZipPath || !latestManifest) {
     setUpdaterState({ status: 'error', message: 'Обновление не скачано' });
     return { ok: false, reason: 'not-downloaded' };
   }
 
   setUpdaterState({ status: 'installing', message: 'Подготовка установки обновления...' });
-  const expectedVersion = latestManifest?.version ?? '';
-  await appendUpdaterLog('install_start', { zip: downloadedZipPath, expectedVersion });
+  const expectedVersion = latestManifest.version;
+  const expectedSha256 = latestManifest.sha256.toLowerCase();
+  const expectedSize = Number(latestManifest.size ?? 0);
+  await appendUpdaterLog('step=install_start', { zip: downloadedZipPath, expectedVersion });
 
   try {
     await fs.mkdir(path.dirname(EXPECTED_VERSION_PATH), { recursive: true });
@@ -398,18 +481,39 @@ async function installCustomUpdate(): Promise<InstallUpdateResult> {
   } catch {
     const message = 'Не удалось установить обновление: нет прав на запись в /Applications.';
     setUpdaterState({ status: 'error', message });
-    await appendUpdaterLog('install_failed_permission_denied', { dir: '/Applications', expectedVersion });
+    await appendUpdaterLog('step=install_failed_permission_denied', { dir: '/Applications', expectedVersion });
     return { ok: false, reason: 'permission-denied' };
   }
 
   try {
+    const stat = await fs.stat(downloadedZipPath);
+    if (expectedSize > 0 && stat.size !== expectedSize) {
+      const message = 'Ошибка установки обновления: corrupted update archive';
+      setUpdaterState({ status: 'error', message });
+      await appendUpdaterLog('error: corrupted update archive', { stage: 'install_precheck', reason: 'size_mismatch', expectedSize, actualSize: stat.size });
+      return { ok: false, reason: 'security-check-failed' };
+    }
+
+    const actualSha256 = (await hashFileSha256(downloadedZipPath)).toLowerCase();
+    if (actualSha256 !== expectedSha256) {
+      const message = 'Ошибка установки обновления: corrupted update archive';
+      setUpdaterState({ status: 'error', message });
+      await appendUpdaterLog('error: corrupted update archive', {
+        stage: 'install_precheck',
+        reason: 'sha256_mismatch',
+        expectedSha256,
+        actualSha256
+      });
+      return { ok: false, reason: 'security-check-failed' };
+    }
+
     const packagedScript = path.join(process.resourcesPath, 'updater.sh');
     const devScript = path.join(process.cwd(), 'build-resources', 'updater.sh');
     const scriptPath = app.isPackaged ? packagedScript : devScript;
 
     await fs.access(scriptPath);
 
-    const child = spawn('/bin/bash', [scriptPath, downloadedZipPath, expectedVersion], {
+    const child = spawn('/bin/bash', [scriptPath, downloadedZipPath, expectedVersion, expectedSha256, String(stat.size)], {
       detached: true,
       stdio: 'ignore'
     });
@@ -418,16 +522,17 @@ async function installCustomUpdate(): Promise<InstallUpdateResult> {
     setUpdaterState({ status: 'restarting', message: 'Перезапуск лаунчера...' });
     log.info('[custom-updater] updater spawned', { scriptPath, pid: child.pid, expectedVersion });
     await appendUpdaterLog('expectedVersion', { expectedVersion });
-    await appendUpdaterLog('install_spawned', { scriptPath, pid: child.pid, expectedVersion });
+    await appendUpdaterLog('step=install_spawned', { scriptPath, pid: child.pid, expectedVersion, expectedSha256, expectedSize: stat.size });
 
     log.info('[custom-updater] app quitting for custom update');
+    await appendUpdaterLog('step=app_quit_for_update');
     isQuitting = true;
     app.quit();
     return { ok: true };
   } catch (error) {
     const details = toErrorDetails(error);
     setUpdaterState({ status: 'error', message: `Ошибка установки обновления: ${details.message}` });
-    await appendUpdaterLog('install_failed', { error: details.message });
+    await appendUpdaterLog('step=install_failed', { error: details.message });
     return { ok: false, reason: 'spawn-failed' };
   }
 }

@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '1.3.3';
+const APP_VERSION = '1.3.4';
 
 function App() {
   const {
@@ -262,6 +262,7 @@ function App() {
                   {updater.status === 'restarting' && 'Перезапуск лаунчера...'}
                 </p>
               )}
+              {updater.message && updater.status === 'error' && <p className="text-xs text-[#ff8a8a]">{updater.message}</p>}
               {effectiveHelpText && <p className="text-xs text-bc-muted">{effectiveHelpText}</p>}
             </div>
             <div className="flex w-[430px] items-center justify-end gap-2">
@@ -316,6 +317,10 @@ function App() {
                     if (!result.ok) {
                       if (result.reason === 'permission-denied') {
                         addToast('Не удалось установить обновление: нет прав на запись в /Applications.');
+                        return;
+                      }
+                      if (result.reason === 'security-check-failed') {
+                        addToast('Обновление отклонено: повреждён архив.');
                         return;
                       }
                       addToast('Не удалось запустить установку обновления');
