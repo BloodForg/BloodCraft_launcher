@@ -23,7 +23,7 @@ let installInProgress = false;
 let isQuitting = false;
 
 const PROGRESS_THROTTLE_MS = 120;
-const UPDATE_MANIFEST_BASE_URL = 'https://thebloodcraft.ru/launcher/updates';
+const UPDATE_MANIFEST_BASE_URL = (process.env.BLOODCRAFT_UPDATE_BASE_URL || 'https://thebloodcraft.ru/launcher/updates').replace(/\/+$/, '');
 const UPDATE_DOWNLOAD_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'BloodCraft', 'updates');
 const UPDATE_TMP_DIR = path.join(UPDATE_DOWNLOAD_DIR, 'tmp');
 const UPDATE_TMP_FILE_PATH = path.join(UPDATE_TMP_DIR, 'update.tmp');
@@ -34,6 +34,8 @@ const EXPECTED_VERSION_PATH = path.join(os.homedir(), 'Library', 'Application Su
 const DOWNLOAD_MAX_ATTEMPTS = 3;
 const DOWNLOAD_ATTEMPT_TIMEOUT_MS = 10000;
 const DOWNLOAD_RETRY_DELAY_MS = 1200;
+const UPDATE_CHECK_TIMEOUT_MS = Number.parseInt(process.env.BLOODCRAFT_UPDATE_CHECK_TIMEOUT_MS || '60000', 10);
+const MANIFEST_RETRY_ATTEMPTS = 3;
 
 type CustomUpdateStatus = 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
 type UpdateChannel = 'stable' | 'beta' | 'dev';
@@ -100,6 +102,8 @@ function resolveUpdateChannel(): UpdateChannel {
 }
 
 function manifestUrlForChannel(channel: UpdateChannel): string {
+  const override = (process.env.BLOODCRAFT_UPDATE_MANIFEST_URL || '').trim();
+  if (override) return override;
   if (channel === 'stable') return `${UPDATE_MANIFEST_BASE_URL}/latest.json`;
   return `${UPDATE_MANIFEST_BASE_URL}/latest-${channel}.json`;
 }
@@ -280,6 +284,7 @@ async function cleanupBackupAfterSuccessfulStart(): Promise<void> {
 
   const launchedVersion = app.getVersion();
   await appendUpdaterLog('launchedVersion', { launchedVersion });
+  await appendUpdaterLog('expectedVersion', { expectedVersion });
   log.info('[custom-updater] post-update proof', { expectedVersion, launchedVersion });
 
   if (!expectedVersion || expectedVersion !== launchedVersion) {
@@ -311,81 +316,127 @@ async function cleanupBackupAfterSuccessfulStart(): Promise<void> {
 async function checkForCustomUpdate(): Promise<{ ok: boolean; available: boolean }> {
   const channel = resolveUpdateChannel();
   const manifestUrl = manifestUrlForChannel(channel);
+  const softFailMessage = 'Не удалось проверить обновления. Сервер обновлений временно недоступен.';
+
   setUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
-  log.info('[custom-updater] check started', { currentVersion: app.getVersion(), url: manifestUrl, channel });
-  await appendUpdaterLog('check_started', { currentVersion: app.getVersion(), url: manifestUrl, channel });
+  log.info('[custom-updater] check started', { currentVersion: app.getVersion(), url: manifestUrl, channel, timeoutMs: UPDATE_CHECK_TIMEOUT_MS });
+  await appendUpdaterLog('check_started', { currentVersion: app.getVersion(), url: manifestUrl, channel, timeoutMs: UPDATE_CHECK_TIMEOUT_MS });
 
-  try {
-    const response = await axios.get<LatestManifest>(manifestUrl, {
-      timeout: 15000,
-      validateStatus: () => true
-    });
+  let lastManifestError = 'unknown';
+  for (let attempt = 1; attempt <= MANIFEST_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await axios.get<LatestManifest>(manifestUrl, {
+        timeout: UPDATE_CHECK_TIMEOUT_MS,
+        validateStatus: () => true
+      });
 
-    const manifest = response.data;
-    const hasSize = typeof manifest?.size === 'number' && Number.isFinite(manifest.size) && manifest.size > 0;
-    if (response.status !== 200 || !manifest?.version || !manifest?.url || !manifest?.sha256 || !hasSize) {
-      throw new Error(`Bad latest.json response status=${response.status}`);
+      if (response.status !== 200) {
+        throw new Error(`Bad latest.json response status=${response.status}`);
+      }
+
+      const manifest = response.data;
+      const hasSize = typeof manifest?.size === 'number' && Number.isFinite(manifest.size) && manifest.size > 0;
+      const hasMinBootstrap = typeof manifest?.minBootstrapVersion === 'string' && manifest.minBootstrapVersion.trim().length > 0;
+      if (!manifest?.version || !manifest?.url || !manifest?.sha256 || !hasSize || !hasMinBootstrap) {
+        await appendUpdaterLog('manifest_invalid', {
+          reason: 'missing_required_fields',
+          hasVersion: Boolean(manifest?.version),
+          hasUrl: Boolean(manifest?.url),
+          hasSha256: Boolean(manifest?.sha256),
+          hasSize,
+          hasMinBootstrap
+        });
+        setUpdaterState({ status: 'idle', message: softFailMessage, progress: 0 });
+        return { ok: false, available: false };
+      }
+
+      if (manifest.channel && !['stable', 'beta', 'dev'].includes(manifest.channel)) {
+        await appendUpdaterLog('manifest_invalid', { reason: 'invalid_channel', channel: manifest.channel });
+        setUpdaterState({ status: 'idle', message: softFailMessage, progress: 0 });
+        return { ok: false, available: false };
+      }
+
+      if (manifest.rolloutPercentage !== undefined) {
+        const rolloutRaw = Number(manifest.rolloutPercentage);
+        if (!Number.isFinite(rolloutRaw) || rolloutRaw < 0 || rolloutRaw > 100) {
+          await appendUpdaterLog('manifest_invalid', { reason: 'invalid_rollout_percentage', rolloutPercentage: manifest.rolloutPercentage });
+          setUpdaterState({ status: 'idle', message: softFailMessage, progress: 0 });
+          return { ok: false, available: false };
+        }
+      }
+
+      await appendUpdaterLog('manifest_loaded', {
+        status: response.status,
+        attempt,
+        version: manifest.version,
+        channel: manifest.channel ?? channel,
+        size: manifest.size,
+        minBootstrapVersion: manifest.minBootstrapVersion
+      });
+
+      if (manifest.channel && manifest.channel !== channel) {
+        setUpdaterState({ status: 'idle', message: 'Обновление для другого канала', version: app.getVersion(), progress: 0 });
+        await appendUpdaterLog('step=channel_mismatch_skip', { requestedChannel: channel, manifestChannel: manifest.channel });
+        return { ok: true, available: false };
+      }
+
+      const resolvedUrl = new URL(manifest.url, manifestUrl).toString();
+      if (!resolvedUrl.startsWith('https://') || !isHttpsUrl(resolvedUrl)) {
+        await appendUpdaterLog('manifest_invalid', { reason: 'insecure_update_url', url: resolvedUrl });
+        setUpdaterState({ status: 'idle', message: softFailMessage, progress: 0 });
+        return { ok: false, available: false };
+      }
+
+      const minBootstrapVersion = manifest.minBootstrapVersion?.trim() ?? '';
+      if (compareVersions(app.getVersion(), minBootstrapVersion) < 0) {
+        const message = 'Эта версия лаунчера слишком старая для автообновления. Требуется переустановка.';
+        setUpdaterState({ status: 'error', message, version: manifest.version, progress: 0 });
+        await appendUpdaterLog('step=bootstrap_blocked', { currentVersion: app.getVersion(), minBootstrapVersion, channel });
+        return { ok: false, available: false };
+      }
+
+      const rolloutPercentage = Math.max(0, Math.min(100, Number(manifest.rolloutPercentage ?? 100)));
+      const bucket = rolloutBucket();
+      if (bucket >= rolloutPercentage) {
+        setUpdaterState({ status: 'idle', message: 'Обновление пока недоступно для вашего канала', version: app.getVersion(), progress: 0 });
+        await appendUpdaterLog('step=rollout_skip', { bucket, rolloutPercentage, channel, version: manifest.version });
+        return { ok: true, available: false };
+      }
+
+      latestManifest = { ...manifest, channel: manifest.channel ?? channel, url: resolvedUrl };
+
+      const cmp = compareVersions(manifest.version, app.getVersion());
+      if (cmp <= 0) {
+        setUpdaterState({ status: 'idle', message: 'У вас последняя версия', version: app.getVersion(), progress: 0 });
+        log.info('[custom-updater] no update', { latestVersion: manifest.version });
+        await appendUpdaterLog('step=no_update_available', { latestVersion: manifest.version, channel });
+        return { ok: true, available: false };
+      }
+
+      setUpdaterState({
+        status: 'update_available',
+        message: `Доступно обновление ${manifest.version}`,
+        version: manifest.version,
+        progress: 0
+      });
+      log.info('[custom-updater] update found', { latestVersion: manifest.version, url: resolvedUrl, channel });
+      await appendUpdaterLog('step=update_available', { latestVersion: manifest.version, url: resolvedUrl, channel });
+      return { ok: true, available: true };
+    } catch (error) {
+      const details = toErrorDetails(error);
+      lastManifestError = details.message;
+      log.warn('[custom-updater] manifest check attempt failed', { attempt, maxAttempts: MANIFEST_RETRY_ATTEMPTS, error: details.message });
+      if (attempt < MANIFEST_RETRY_ATTEMPTS) {
+        await appendUpdaterLog('manifest_retry', { attempt, maxAttempts: MANIFEST_RETRY_ATTEMPTS, error: details.message, nextDelayMs: DOWNLOAD_RETRY_DELAY_MS });
+        await sleep(DOWNLOAD_RETRY_DELAY_MS);
+      }
     }
-
-    await appendUpdaterLog('manifest_loaded', {
-      status: response.status,
-      version: manifest.version,
-      channel: manifest.channel ?? channel,
-      size: manifest.size
-    });
-
-    if (manifest.channel && manifest.channel !== channel) {
-      setUpdaterState({ status: 'idle', message: 'Обновление для другого канала', version: app.getVersion(), progress: 0 });
-      await appendUpdaterLog('step=channel_mismatch_skip', { requestedChannel: channel, manifestChannel: manifest.channel });
-      return { ok: true, available: false };
-    }
-
-    const resolvedUrl = new URL(manifest.url, manifestUrl).toString();
-    if (!resolvedUrl.startsWith('https://') || !isHttpsUrl(resolvedUrl)) {
-      throw new Error('insecure update url');
-    }
-
-    const minBootstrapVersion = manifest.minBootstrapVersion?.trim();
-    if (minBootstrapVersion && compareVersions(app.getVersion(), minBootstrapVersion) < 0) {
-      const message = 'Эта версия лаунчера слишком старая для автообновления. Требуется переустановка.';
-      setUpdaterState({ status: 'error', message, version: manifest.version, progress: 0 });
-      await appendUpdaterLog('step=bootstrap_blocked', { currentVersion: app.getVersion(), minBootstrapVersion, channel });
-      return { ok: false, available: false };
-    }
-
-    const rolloutPercentage = Math.max(0, Math.min(100, Number(manifest.rolloutPercentage ?? 100)));
-    const bucket = rolloutBucket();
-    if (bucket >= rolloutPercentage) {
-      setUpdaterState({ status: 'idle', message: 'Обновление пока недоступно для вашего канала', version: app.getVersion(), progress: 0 });
-      await appendUpdaterLog('step=rollout_skip', { bucket, rolloutPercentage, channel, version: manifest.version });
-      return { ok: true, available: false };
-    }
-
-    latestManifest = { ...manifest, channel: manifest.channel ?? channel, url: resolvedUrl };
-
-    const cmp = compareVersions(manifest.version, app.getVersion());
-    if (cmp <= 0) {
-      setUpdaterState({ status: 'idle', message: 'У вас последняя версия', version: app.getVersion(), progress: 0 });
-      log.info('[custom-updater] no update', { latestVersion: manifest.version });
-      await appendUpdaterLog('step=no_update_available', { latestVersion: manifest.version, channel });
-      return { ok: true, available: false };
-    }
-
-    setUpdaterState({
-      status: 'update_available',
-      message: `Доступно обновление ${manifest.version}`,
-      version: manifest.version,
-      progress: 0
-    });
-    log.info('[custom-updater] update found', { latestVersion: manifest.version, url: resolvedUrl, channel });
-    await appendUpdaterLog('step=update_available', { latestVersion: manifest.version, url: resolvedUrl, channel });
-    return { ok: true, available: true };
-  } catch (error) {
-    const details = toErrorDetails(error);
-    setUpdaterState({ status: 'error', message: `Ошибка проверки обновлений: ${details.message}` });
-    await appendUpdaterLog('step=check_failed', { error: details.message });
-    return { ok: false, available: false };
   }
+
+  log.warn('[custom-updater] manifest check failed after retries', { error: lastManifestError });
+  await appendUpdaterLog('manifest_failed', { attempts: MANIFEST_RETRY_ATTEMPTS, error: lastManifestError });
+  setUpdaterState({ status: 'idle', message: softFailMessage, progress: 0 });
+  return { ok: false, available: false };
 }
 
 async function downloadCustomUpdate(): Promise<boolean> {
@@ -490,6 +541,14 @@ async function downloadCustomUpdate(): Promise<boolean> {
     } catch (error) {
       const details = toErrorDetails(error);
       lastErrorMessage = details.message;
+      if (attempt < DOWNLOAD_MAX_ATTEMPTS) {
+        await appendUpdaterLog('download_retry', {
+          attempt,
+          maxAttempts: DOWNLOAD_MAX_ATTEMPTS,
+          error: details.message,
+          nextDelayMs: DOWNLOAD_RETRY_DELAY_MS
+        });
+      }
       await appendUpdaterLog('step=download_attempt_failed', {
         attempt,
         maxAttempts: DOWNLOAD_MAX_ATTEMPTS,
@@ -636,6 +695,19 @@ app.whenReady().then(async () => {
 
   if (isDev) {
     void devSelfCheck();
+  }
+
+  if (process.env.BLOODCRAFT_HEADLESS_UPDATE_CHECK === '1') {
+    try {
+      const res = await checkForCustomUpdate();
+      log.info('[selfcheck] headless update check result', res);
+      app.exit(0);
+    } catch (error) {
+      const details = toErrorDetails(error);
+      log.error('[selfcheck] headless update check failed', details);
+      app.exit(1);
+    }
+    return;
   }
 
   if (process.env.BLOODCRAFT_HEADLESS_SELFCHECK === '1') {
