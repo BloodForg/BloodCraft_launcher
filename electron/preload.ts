@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { Distribution, InstallProgress, LauncherStatus } from './launcher/types.js';
 
+type UpdaterStatus = {
+  status: 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
+  message?: string;
+  progress?: number;
+  version?: string;
+  filePath?: string;
+};
+
+type InstallUpdateResult = {
+  ok: boolean;
+  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'unknown';
+};
+
 contextBridge.exposeInMainWorld('bloodcraft', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   app: {
@@ -46,34 +59,16 @@ contextBridge.exposeInMainWorld('bloodcraft', {
     openLatestMinecraft: (): Promise<string> => ipcRenderer.invoke('logs:openLatestMinecraft')
   },
   updater: {
-    getStatus: (): Promise<{
-      status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
-      message?: string;
-      progress?: number;
-      version?: string;
-    }> => ipcRenderer.invoke('updater:getStatus'),
-    check: (): Promise<boolean> => ipcRenderer.invoke('updater:check'),
-    download: (): Promise<boolean> => ipcRenderer.invoke('updater:download'),
-    restart: (): Promise<{ ok: boolean; reason?: 'not-downloaded' }> => ipcRenderer.invoke('updater:restart'),
-    shipitLogs: (): Promise<string> => ipcRenderer.invoke('updater:shipitLogs'),
+    getStatus: (): Promise<UpdaterStatus> => ipcRenderer.invoke('updater:getStatus'),
+    checkForUpdate: (): Promise<{ ok: boolean; available: boolean }> => ipcRenderer.invoke('updater:checkForUpdate'),
+    downloadUpdate: (): Promise<boolean> => ipcRenderer.invoke('updater:downloadUpdate'),
+    installUpdate: (): Promise<InstallUpdateResult> => ipcRenderer.invoke('updater:installUpdate'),
     openUpdateFolder: (): Promise<string> => ipcRenderer.invoke('updater:openUpdateFolder'),
-    onStatus: (
-      cb: (status: {
-        status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
-        message?: string;
-        progress?: number;
-        version?: string;
-      }) => void
-    ) => {
-      const handler = (_event: Electron.IpcRendererEvent, status: { status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'; message?: string; progress?: number; version?: string }) =>
-        cb(status);
+    logPath: (): Promise<string> => ipcRenderer.invoke('updater:logPath'),
+    onStatus: (cb: (status: UpdaterStatus) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: UpdaterStatus) => cb(status);
       ipcRenderer.on('updater:status', handler);
       return () => ipcRenderer.removeListener('updater:status', handler);
-    },
-    onShipItLog: (cb: (text: string) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, text: string) => cb(text);
-      ipcRenderer.on('updater:shipit-log', handler);
-      return () => ipcRenderer.removeListener('updater:shipit-log', handler);
     }
   },
   launcher: {

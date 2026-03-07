@@ -1,8 +1,14 @@
 export type UpdaterStatus = {
-  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  status: 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
   message?: string;
   progress?: number;
   version?: string;
+  filePath?: string;
+};
+
+export type InstallUpdateResult = {
+  ok: boolean;
+  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'unknown';
 };
 
 export const updateService = {
@@ -10,32 +16,28 @@ export const updateService = {
     if (!window.bloodcraft?.updater) return { status: 'idle' };
     return window.bloodcraft.updater.getStatus();
   },
-  check: async (): Promise<boolean> => {
+  checkForUpdate: async (): Promise<{ ok: boolean; available: boolean }> => {
+    if (!window.bloodcraft?.updater) return { ok: false, available: false };
+    return window.bloodcraft.updater.checkForUpdate();
+  },
+  downloadUpdate: async (): Promise<boolean> => {
     if (!window.bloodcraft?.updater) return false;
-    return window.bloodcraft.updater.check();
+    return window.bloodcraft.updater.downloadUpdate();
   },
-  download: async (): Promise<boolean> => {
-    if (!window.bloodcraft?.updater) return false;
-    return window.bloodcraft.updater.download();
-  },
-  restart: async (): Promise<{ ok: boolean; reason?: 'not-downloaded' | 'running-from-dmg' }> => {
-    if (!window.bloodcraft?.updater) return { ok: false };
-    return window.bloodcraft.updater.restart();
-  },
-  shipitLogs: async (): Promise<string> => {
-    if (!window.bloodcraft?.updater) return '';
-    return window.bloodcraft.updater.shipitLogs();
+  installUpdate: async (): Promise<InstallUpdateResult> => {
+    if (!window.bloodcraft?.updater) return { ok: false, reason: 'unknown' };
+    return window.bloodcraft.updater.installUpdate();
   },
   openUpdateFolder: async (): Promise<string> => {
     if (!window.bloodcraft?.updater) return '';
     return window.bloodcraft.updater.openUpdateFolder();
   },
+  logPath: async (): Promise<string> => {
+    if (!window.bloodcraft?.updater?.logPath) return '';
+    return window.bloodcraft.updater.logPath();
+  },
   onStatus: (cb: (status: UpdaterStatus) => void) => {
     if (!window.bloodcraft?.updater) return () => undefined;
     return window.bloodcraft.updater.onStatus(cb);
-  },
-  onShipItLog: (cb: (text: string) => void) => {
-    if (!window.bloodcraft?.updater?.onShipItLog) return () => undefined;
-    return window.bloodcraft.updater.onShipItLog(cb);
   }
 };

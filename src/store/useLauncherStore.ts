@@ -34,10 +34,11 @@ interface LauncherState {
   playHelpAction: 'none' | 'open-site' | 'retry' | 'open-minecraft-log' | 'open-logs-dir';
   playHelpText?: string;
   updater: {
-    status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+    status: 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
     message?: string;
     progress?: number;
     version?: string;
+    filePath?: string;
   };
 
   servers: ServerItem[];

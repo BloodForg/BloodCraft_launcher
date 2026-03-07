@@ -4,14 +4,14 @@ import { useSettingsStore } from '../store/useSettingsStore';
 interface Props {
   appVersion: string;
   onCheckUpdates: () => Promise<void>;
-  onShowShipItLog: () => Promise<void>;
   onOpenUpdateFolder: () => Promise<void>;
+  onOpenUpdaterLogPath: () => Promise<void>;
   onOpenLogsDir: () => Promise<void>;
   onOpenLatestLog: () => Promise<void>;
   onDiagnoseConnection: () => Promise<void>;
 }
 
-export const SettingsModal = ({ appVersion, onCheckUpdates, onShowShipItLog, onOpenUpdateFolder, onOpenLogsDir, onOpenLatestLog, onDiagnoseConnection }: Props) => {
+export const SettingsModal = ({ appVersion, onCheckUpdates, onOpenUpdateFolder, onOpenUpdaterLogPath, onOpenLogsDir, onOpenLatestLog, onDiagnoseConnection }: Props) => {
   const { settingsOpen, setSettingsOpen } = useLauncherStore((s) => ({
     settingsOpen: s.settingsOpen,
     setSettingsOpen: s.setSettingsOpen
@@ -56,16 +56,16 @@ export const SettingsModal = ({ appVersion, onCheckUpdates, onShowShipItLog, onO
             <input className="field" value={javaPath} onChange={(e) => setJavaPath(e.target.value)} placeholder="/path/to/java" />
           </div>
           <div className="rounded-[18px] border border-white/10 bg-bc-cardSoft p-3">
-            <p className="mb-2 text-xs uppercase text-bc-muted">Updates & Сервис</p>
+            <p className="mb-2 text-xs uppercase text-bc-muted">Обновления и сервис</p>
             <div className="grid gap-2">
               <button className="btn-secondary" onClick={onCheckUpdates}>
-                Проверить / Повторить обновления
-              </button>
-              <button className="btn-secondary" onClick={onShowShipItLog}>
-                Показать лог обновления
+                Проверить обновления
               </button>
               <button className="btn-secondary" onClick={onOpenUpdateFolder}>
-                Открыть папку обновления
+                Открыть папку updates
+              </button>
+              <button className="btn-secondary" onClick={onOpenUpdaterLogPath}>
+                Показать путь updater.log
               </button>
               <button className="btn-secondary" onClick={onDiagnoseConnection}>
                 Проверить соединение

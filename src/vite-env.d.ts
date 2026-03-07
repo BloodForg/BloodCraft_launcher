@@ -38,10 +38,16 @@ type Distribution = {
 };
 
 type UpdaterStatus = {
-  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  status: 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
   message?: string;
   progress?: number;
   version?: string;
+  filePath?: string;
+};
+
+type InstallUpdateResult = {
+  ok: boolean;
+  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'unknown';
 };
 
 type NetworkDiagnostics = {
@@ -90,13 +96,12 @@ declare global {
       };
       updater?: {
         getStatus: () => Promise<UpdaterStatus>;
-        check: () => Promise<boolean>;
-        download: () => Promise<boolean>;
-        restart: () => Promise<{ ok: boolean; reason?: 'not-downloaded' | 'running-from-dmg' }>;
-        shipitLogs: () => Promise<string>;
+        checkForUpdate: () => Promise<{ ok: boolean; available: boolean }>;
+        downloadUpdate: () => Promise<boolean>;
+        installUpdate: () => Promise<InstallUpdateResult>;
         openUpdateFolder: () => Promise<string>;
+        logPath: () => Promise<string>;
         onStatus: (cb: (status: UpdaterStatus) => void) => () => void;
-        onShipItLog: (cb: (text: string) => void) => () => void;
       };
       launcher?: {
         getStatus: () => Promise<LauncherStatus>;

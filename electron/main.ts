@@ -2,16 +2,16 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { promises as fs } from 'node:fs';
+import { promises as fs, constants as fsConstants } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { pipeline } from 'node:stream/promises';
+import { spawn } from 'node:child_process';
 import log from 'electron-log';
-import updaterPkg from 'electron-updater';
+import axios from 'axios';
 import { fetchDistribution, getStatus, install, launch } from './launcher/index.js';
 import type { InstallProgress } from './launcher/types.js';
 import { devSelfCheck, fetchJoinTokenForLaunch, loginWithSite, logoutSession, mapAuthError, me, refreshSession, runNetworkDiagnostics, setAccessTokenForOps, verifyJoinTokenPreflight } from './authService.js';
-
-const { autoUpdater } = updaterPkg as unknown as {
-  autoUpdater: import('electron-updater').AppUpdater;
-};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,29 +21,60 @@ let mainWindow: BrowserWindow | null = null;
 let lastLauncherError: string | undefined;
 let installInProgress = false;
 let isQuitting = false;
-let updateDownloaded = false;
-let restartFallbackTimer: NodeJS.Timeout | null = null;
+
+const PROGRESS_THROTTLE_MS = 120;
+const UPDATE_MANIFEST_URL = 'https://thebloodcraft.ru/launcher/updates/latest.json';
+const UPDATE_DOWNLOAD_DIR = path.join(os.homedir(), 'Library', 'Application Support', 'BloodCraft', 'updates');
+const UPDATER_LOG_PATH = path.join(os.homedir(), 'Library', 'Logs', 'bloodcraft-launcher', 'updater.log');
+const MAC_APP_BACKUP_PATH = '/Applications/BloodCraft.app.backup';
+const EXPECTED_VERSION_PATH = path.join(os.homedir(), 'Library', 'Application Support', 'BloodCraft', 'updates', 'expected-version.txt');
+
+type CustomUpdateStatus = 'idle' | 'checking' | 'update_available' | 'downloading' | 'downloaded' | 'installing' | 'restarting' | 'error';
+
+type LatestManifest = {
+  version: string;
+  url: string;
+  sha256: string;
+  minBootstrapVersion?: string;
+};
+
+type InstallUpdateResult = {
+  ok: boolean;
+  reason?: 'permission-denied' | 'not-downloaded' | 'spawn-failed' | 'unknown';
+};
+
 let updaterState: {
-  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  status: CustomUpdateStatus;
   message?: string;
   progress?: number;
   version?: string;
+  filePath?: string;
 } = { status: 'idle' };
+
+let latestManifest: LatestManifest | null = null;
+let downloadedZipPath: string | null = null;
 let lastProgressAt = 0;
 let queuedProgress: InstallProgress | null = null;
 let progressTimer: NodeJS.Timeout | null = null;
-const PROGRESS_THROTTLE_MS = 120;
-const DEFAULT_UPDATE_FEED_URL = "https://thebloodcraft.ru/launcher/updates/";
 
-function normalizeUpdateFeedUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return DEFAULT_UPDATE_FEED_URL;
-  return trimmed.endsWith("/") ? trimmed : trimmed + "/";
+function parseVersion(version: string): number[] {
+  return version
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
 }
 
-function resolveUpdateFeedUrl(): string {
-  const fromEnv = process.env.BLOODCRAFT_UPDATER_URL || process.env.UPDATER_URL || process.env.AUTO_UPDATE_URL || "";
-  return normalizeUpdateFeedUrl(fromEnv || DEFAULT_UPDATE_FEED_URL);
+function compareVersions(left: string, right: string): number {
+  const l = parseVersion(left);
+  const r = parseVersion(right);
+  const max = Math.max(l.length, r.length);
+  for (let i = 0; i < max; i += 1) {
+    const lv = l[i] ?? 0;
+    const rv = r[i] ?? 0;
+    if (lv > rv) return 1;
+    if (lv < rv) return -1;
+  }
+  return 0;
 }
 
 function toErrorDetails(error: unknown): {
@@ -63,7 +94,7 @@ function toErrorDetails(error: unknown): {
   }
 
   if (error && typeof error === 'object') {
-    const candidate = error as { message?: unknown; code?: unknown; name?: unknown; stack?: unknown; cause?: unknown };
+    const candidate = error as { message?: unknown; name?: unknown; stack?: unknown; cause?: unknown };
     return {
       message: typeof candidate.message === 'string' ? candidate.message : JSON.stringify(error),
       name: typeof candidate.name === 'string' ? candidate.name : 'NonErrorThrow',
@@ -78,6 +109,21 @@ function toErrorDetails(error: unknown): {
     name: 'UnknownError',
     raw: error
   };
+}
+
+async function appendUpdaterLog(message: string, extra?: Record<string, unknown>): Promise<void> {
+  try {
+    await fs.mkdir(path.dirname(UPDATER_LOG_PATH), { recursive: true });
+    const line = `[${new Date().toISOString()}] ${message}${extra ? ` ${JSON.stringify(extra)}` : ''}\n`;
+    await fs.appendFile(UPDATER_LOG_PATH, line, 'utf8');
+  } catch (error) {
+    log.warn('[custom-updater] failed to write updater log', error);
+  }
+}
+
+function setUpdaterState(patch: Partial<typeof updaterState>) {
+  updaterState = { ...updaterState, ...patch };
+  mainWindow?.webContents.send('updater:status', updaterState);
 }
 
 function flushProgress(force = false) {
@@ -154,71 +200,237 @@ function createWindow() {
   return win;
 }
 
-function getShipItLogPaths(): string[] {
-  const home = os.homedir();
-  const appId = 'ru.thebloodcraft.launcher';
-  return [
-    path.join(home, 'Library', 'Application Support', `${appId}.ShipIt`, 'ShipIt_stderr.log'),
-    path.join(home, 'Library', 'Caches', `${appId}.ShipIt`, 'ShipIt_stderr.log')
-  ];
+function sanitizeFileName(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const base = path.basename(parsed.pathname);
+    return base || 'BloodCraft-mac.zip';
+  } catch {
+    return 'BloodCraft-mac.zip';
+  }
 }
 
-function getShipItFolderCandidates(): string[] {
-  const home = os.homedir();
-  const appId = 'ru.thebloodcraft.launcher';
-  return [path.join(home, 'Library', 'Application Support', `${appId}.ShipIt`), path.join(home, 'Library', 'Caches', `${appId}.ShipIt`)];
+async function hashFileSha256(filePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', reject);
+    stream.on('end', () => resolve());
+  });
+  return hash.digest('hex');
 }
 
-async function tailLines(filePath: string, maxLines = 300): Promise<string> {
-  const content = await fs.readFile(filePath, 'utf8');
-  const lines = content.split(/\r?\n/);
-  return lines.slice(Math.max(0, lines.length - maxLines)).join('\n');
+async function cleanupBackupAfterSuccessfulStart(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  if (!process.execPath.includes('/Applications/BloodCraft.app/')) return;
+
+  try {
+    await fs.access(MAC_APP_BACKUP_PATH);
+  } catch {
+    return;
+  }
+
+  let expectedVersion = '';
+  try {
+    expectedVersion = (await fs.readFile(EXPECTED_VERSION_PATH, 'utf8')).trim();
+  } catch {
+    expectedVersion = '';
+  }
+
+  const launchedVersion = app.getVersion();
+  await appendUpdaterLog('launchedVersion', { launchedVersion });
+  log.info('[custom-updater] post-update proof', { expectedVersion, launchedVersion });
+
+  if (!expectedVersion || expectedVersion !== launchedVersion) {
+    await appendUpdaterLog('backup_cleanup_skipped', {
+      reason: 'version_mismatch_or_missing_expected',
+      expectedVersion,
+      launchedVersion
+    });
+    await appendUpdaterLog('backupCleanupSuccess', { ok: false, reason: 'version_mismatch_or_missing_expected' });
+    return;
+  }
+
+  try {
+    await fs.rm(MAC_APP_BACKUP_PATH, { recursive: true, force: true });
+    await fs.rm(EXPECTED_VERSION_PATH, { force: true });
+    log.info('[custom-updater] backup removed after successful app start', { backupPath: MAC_APP_BACKUP_PATH, expectedVersion, launchedVersion });
+    await appendUpdaterLog('backup_removed_after_successful_start', { backupPath: MAC_APP_BACKUP_PATH, expectedVersion, launchedVersion });
+    await appendUpdaterLog('backupCleanupSuccess', { ok: true });
+  } catch (error) {
+    const details = toErrorDetails(error);
+    log.warn('[custom-updater] failed to remove backup after startup', { backupPath: MAC_APP_BACKUP_PATH, error: details.message });
+    await appendUpdaterLog('backup_remove_failed', { backupPath: MAC_APP_BACKUP_PATH, error: details.message });
+    await appendUpdaterLog('backupCleanupSuccess', { ok: false, reason: details.message });
+  }
 }
 
-async function readShipItLogs(): Promise<string> {
-  const parts: string[] = [];
-  for (const filePath of getShipItLogPaths()) {
-    try {
-      const tail = await tailLines(filePath, 300);
-      if (tail.trim()) {
-        parts.push(`=== ${filePath} ===\n${tail}`);
+async function checkForCustomUpdate(): Promise<{ ok: boolean; available: boolean }> {
+  setUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
+  log.info('[custom-updater] check started', { currentVersion: app.getVersion(), url: UPDATE_MANIFEST_URL });
+  await appendUpdaterLog('checking_for_update', { currentVersion: app.getVersion(), url: UPDATE_MANIFEST_URL });
+
+  try {
+    const response = await axios.get<LatestManifest>(UPDATE_MANIFEST_URL, {
+      timeout: 15000,
+      validateStatus: () => true
+    });
+
+    if (response.status !== 200 || !response.data?.version || !response.data?.url || !response.data?.sha256) {
+      throw new Error(`Bad latest.json response status=${response.status}`);
+    }
+
+    const manifest = response.data;
+    const resolvedUrl = new URL(manifest.url, UPDATE_MANIFEST_URL).toString();
+    latestManifest = { ...manifest, url: resolvedUrl };
+
+    const cmp = compareVersions(manifest.version, app.getVersion());
+    if (cmp <= 0) {
+      setUpdaterState({ status: 'idle', message: 'У вас последняя версия', version: app.getVersion(), progress: 0 });
+      log.info('[custom-updater] no update', { latestVersion: manifest.version });
+      await appendUpdaterLog('no_update_available', { latestVersion: manifest.version });
+      return { ok: true, available: false };
+    }
+
+    setUpdaterState({
+      status: 'update_available',
+      message: `Доступно обновление ${manifest.version}`,
+      version: manifest.version,
+      progress: 0
+    });
+    log.info('[custom-updater] update found', { latestVersion: manifest.version, url: resolvedUrl });
+    await appendUpdaterLog('update_available', { latestVersion: manifest.version, url: resolvedUrl });
+    return { ok: true, available: true };
+  } catch (error) {
+    const details = toErrorDetails(error);
+    setUpdaterState({ status: 'error', message: `Ошибка проверки обновлений: ${details.message}` });
+    await appendUpdaterLog('check_failed', { error: details.message });
+    return { ok: false, available: false };
+  }
+}
+
+async function downloadCustomUpdate(): Promise<boolean> {
+  if (!latestManifest) {
+    const checked = await checkForCustomUpdate();
+    if (!checked.available) return false;
+  }
+
+  if (!latestManifest) return false;
+
+  await fs.mkdir(UPDATE_DOWNLOAD_DIR, { recursive: true });
+  const fileName = sanitizeFileName(latestManifest.url);
+  const finalPath = path.join(UPDATE_DOWNLOAD_DIR, fileName);
+  const tempPath = `${finalPath}.part`;
+
+  setUpdaterState({ status: 'downloading', message: 'Скачивание обновления...', progress: 0, version: latestManifest.version });
+  log.info('[custom-updater] download started', { version: latestManifest.version, url: latestManifest.url, fileName });
+  await appendUpdaterLog('download_start', { version: latestManifest.version, url: latestManifest.url, fileName });
+
+  try {
+    const response = await axios.get(latestManifest.url, {
+      responseType: 'stream',
+      timeout: 600000,
+      validateStatus: () => true
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Download failed status=${response.status}`);
+    }
+
+    const totalBytes = Number(response.headers['content-length'] ?? 0);
+    let downloadedBytes = 0;
+
+    response.data.on('data', (chunk: Buffer) => {
+      downloadedBytes += chunk.length;
+      if (totalBytes > 0) {
+        const percent = Math.min(100, Math.round((downloadedBytes / totalBytes) * 100));
+        setUpdaterState({ status: 'downloading', progress: percent, message: `Скачивание обновления ${percent}%` });
       }
-    } catch {
-      // missing log file is normal
+    });
+
+    await pipeline(response.data, createWriteStream(tempPath));
+    log.info('[custom-updater] download finished', { path: tempPath });
+
+    const actualHash = (await hashFileSha256(tempPath)).toLowerCase();
+    const expectedHash = latestManifest.sha256.toLowerCase();
+    if (actualHash !== expectedHash) {
+      await fs.rm(tempPath, { force: true });
+      throw new Error(`SHA256 mismatch expected=${expectedHash} actual=${actualHash}`);
     }
+    log.info('[custom-updater] hash verified', { sha256: actualHash });
+
+    await fs.rename(tempPath, finalPath);
+
+    downloadedZipPath = finalPath;
+    setUpdaterState({
+      status: 'downloaded',
+      message: 'Обновление скачано',
+      progress: 100,
+      version: latestManifest.version,
+      filePath: finalPath
+    });
+    await appendUpdaterLog('download_ok', { version: latestManifest.version, path: finalPath, sha256: actualHash });
+    return true;
+  } catch (error) {
+    const details = toErrorDetails(error);
+    setUpdaterState({ status: 'error', message: `Ошибка загрузки обновления: ${details.message}` });
+    await appendUpdaterLog('download_failed', { error: details.message });
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    return false;
   }
-  return parts.join('\n\n');
 }
 
-async function openShipItFolder(): Promise<string> {
-  for (const folder of getShipItFolderCandidates()) {
-    try {
-      await fs.access(folder);
-      await shell.openPath(folder);
-      return folder;
-    } catch {
-      // keep checking
-    }
+async function installCustomUpdate(): Promise<InstallUpdateResult> {
+  if (!downloadedZipPath) {
+    setUpdaterState({ status: 'error', message: 'Обновление не скачано' });
+    return { ok: false, reason: 'not-downloaded' };
   }
-  const fallback = getShipItFolderCandidates()[0];
-  await shell.openPath(path.dirname(fallback));
-  return fallback;
+
+  setUpdaterState({ status: 'installing', message: 'Подготовка установки обновления...' });
+  const expectedVersion = latestManifest?.version ?? '';
+  await appendUpdaterLog('install_start', { zip: downloadedZipPath, expectedVersion });
+
+  try {
+    await fs.mkdir(path.dirname(EXPECTED_VERSION_PATH), { recursive: true });
+    await fs.writeFile(EXPECTED_VERSION_PATH, expectedVersion, 'utf8');
+    await fs.access('/Applications', fsConstants.W_OK);
+  } catch {
+    const message = 'Не удалось установить обновление: нет прав на запись в /Applications.';
+    setUpdaterState({ status: 'error', message });
+    await appendUpdaterLog('install_failed_permission_denied', { dir: '/Applications', expectedVersion });
+    return { ok: false, reason: 'permission-denied' };
+  }
+
+  try {
+    const packagedScript = path.join(process.resourcesPath, 'updater.sh');
+    const devScript = path.join(process.cwd(), 'build-resources', 'updater.sh');
+    const scriptPath = app.isPackaged ? packagedScript : devScript;
+
+    await fs.access(scriptPath);
+
+    const child = spawn('/bin/bash', [scriptPath, downloadedZipPath, expectedVersion], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+
+    setUpdaterState({ status: 'restarting', message: 'Перезапуск лаунчера...' });
+    log.info('[custom-updater] updater spawned', { scriptPath, pid: child.pid, expectedVersion });
+    await appendUpdaterLog('expectedVersion', { expectedVersion });
+    await appendUpdaterLog('install_spawned', { scriptPath, pid: child.pid, expectedVersion });
+
+    log.info('[custom-updater] app quitting for custom update');
+    isQuitting = true;
+    app.quit();
+    return { ok: true };
+  } catch (error) {
+    const details = toErrorDetails(error);
+    setUpdaterState({ status: 'error', message: `Ошибка установки обновления: ${details.message}` });
+    await appendUpdaterLog('install_failed', { error: details.message });
+    return { ok: false, reason: 'spawn-failed' };
+  }
 }
-
-const sendUpdaterState = (patch: Partial<typeof updaterState>) => {
-  updaterState = { ...updaterState, ...patch };
-  mainWindow?.webContents.send('updater:status', updaterState);
-};
-
-const isUpdater404LatestMac = (error: unknown): boolean => {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-  return normalized.includes('latest-mac.yml') && normalized.includes('404');
-};
-
-const isRunningFromMountedDmg = (): boolean => {
-  return process.platform === 'darwin' && process.execPath.startsWith('/Volumes/');
-};
 
 async function runHeadlessSelfcheck(): Promise<void> {
   const accessToken = (process.env.BLOODCRAFT_TEST_ACCESS_TOKEN || '').trim();
@@ -264,84 +476,13 @@ async function runHeadlessSelfcheck(): Promise<void> {
   log.info('[selfcheck] post-launch wait finished');
 }
 
-const setupUpdater = () => {
-  if (!app.isPackaged) {
-    log.info('[updater] skipped: app is not packaged');
-    return;
-  }
-
-  autoUpdater.logger = log;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-
-  const updateFeedUrl = resolveUpdateFeedUrl();
-  autoUpdater.setFeedURL({
-    provider: "generic",
-    url: updateFeedUrl,
-  });
-
-  log.info("[updater] feed configured", {
-    provider: "generic",
-    url: updateFeedUrl,
-  });
-
-  log.info('[updater] app version', app.getVersion());
-
-  autoUpdater.on('checking-for-update', () => {
-    log.info('[updater] checking-for-update');
-    if (updateDownloaded) {
-      log.info('[updater] keeping downloaded state during re-check');
-      return;
-    }
-    sendUpdaterState({ status: 'checking', message: 'Проверка обновлений...' });
-  });
-  autoUpdater.on('update-available', (info) => {
-    updateDownloaded = false;
-    log.info('[updater] update-available', { version: info?.version, files: info?.files?.map((f) => f.url) });
-    sendUpdaterState({ status: 'downloading', version: info?.version, message: `Скачиваем обновление ${info?.version}...` });
-  });
-  autoUpdater.on('update-not-available', (info) => {
-    log.info('[updater] update-not-available', { version: info?.version, updateDownloaded });
-    if (updateDownloaded) {
-      sendUpdaterState({ status: 'downloaded', message: updaterState.message || 'Обновление скачано' });
-      return;
-    }
-    sendUpdaterState({ status: 'not-available', message: 'Обновлений нет', progress: 0 });
-  });
-  autoUpdater.on('download-progress', (progressObj) => {
-    log.info('[updater] download-progress', { percent: progressObj.percent, transferred: progressObj.transferred, total: progressObj.total });
-    sendUpdaterState({
-      status: 'downloading',
-      progress: Math.round(progressObj.percent),
-      message: `Загрузка обновления ${Math.round(progressObj.percent)}%`
-    });
-  });
-  autoUpdater.on('update-downloaded', (info) => {
-    updateDownloaded = true;
-    log.info('[updater] update-downloaded', { version: info?.version });
-    sendUpdaterState({ status: 'downloaded', message: `Обновление ${info?.version} скачано` });
-  });
-  autoUpdater.on('error', (error) => {
-    if (updateDownloaded) {
-      log.warn('[updater] error after download; keeping downloaded state', { message: error instanceof Error ? error.message : String(error) });
-      sendUpdaterState({ status: 'downloaded', message: updaterState.message || 'Обновление скачано' });
-      return;
-    }
-    if (isUpdater404LatestMac(error)) {
-      log.warn('[updater] latest-mac.yml not found (treated as no updates)', error);
-      sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
-      return;
-    }
-    log.warn('[updater] error (non-fatal)', { message: error instanceof Error ? error.message : String(error) });
-    sendUpdaterState({ status: 'not-available', message: 'Проверка обновлений пропущена' });
-  });
-};
-
 app.whenReady().then(async () => {
   log.transports.file.level = 'info';
   log.info('[main] app ready');
   log.info('APP VERSION:', app.getVersion());
-  setupUpdater();
+  await appendUpdaterLog(`launcher_started version=${app.getVersion()}`, { appVersion: app.getVersion(), execPath: process.execPath });
+  await cleanupBackupAfterSuccessfulStart();
+
   if (isDev) {
     void devSelfCheck();
   }
@@ -365,8 +506,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('network:check', async () => {
     try {
-      const diagnostics = await runNetworkDiagnostics();
-      return diagnostics;
+      return await runNetworkDiagnostics();
     } catch (error) {
       log.warn('[network] health check failed', error);
       return {
@@ -378,9 +518,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle('network:diagnose', async () => {
-    return runNetworkDiagnostics();
-  });
+  ipcMain.handle('network:diagnose', async () => runNetworkDiagnostics());
 
   ipcMain.handle('auth:login', async (_event, login: string, password: string) => {
     try {
@@ -465,99 +603,21 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle('updater:getStatus', async () => updaterState);
-  ipcMain.handle('updater:check', async () => {
-    if (!app.isPackaged) {
-      log.info('[updater] manual check skipped in dev');
-      sendUpdaterState({ status: 'idle', message: undefined, progress: 0 });
-      return false;
-    }
-    try {
-      await autoUpdater.checkForUpdates();
-      return true;
-    } catch (error) {
-      if (isUpdater404LatestMac(error)) {
-        log.warn('[updater] latest-mac.yml missing on check, treated as no updates');
-        sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
-        return true;
-      }
-      log.error('[updater] manual check failed', error);
-      sendUpdaterState({ status: 'error', message: 'Не удалось проверить обновления' });
-      return false;
-    }
-  });
-  ipcMain.handle('updater:download', async () => {
-    if (!app.isPackaged) {
-      log.info('[updater] download skipped in dev');
-      return false;
-    }
-    try {
-      await autoUpdater.downloadUpdate();
-      return true;
-    } catch (error) {
-      log.error('[updater] download failed', error);
-      sendUpdaterState({ status: 'error', message: 'Не удалось скачать обновление' });
-      return false;
-    }
-  });
-  ipcMain.handle('updater:shipitLogs', async () => {
-    const logs = await readShipItLogs();
-    log.info('[updater] shipit logs requested', { hasLogs: Boolean(logs.trim()) });
-    return logs;
-  });
+  ipcMain.handle('updater:checkForUpdate', async () => checkForCustomUpdate());
+  ipcMain.handle('updater:downloadUpdate', async () => downloadCustomUpdate());
+  ipcMain.handle('updater:installUpdate', async () => installCustomUpdate());
+
+  ipcMain.handle('updater:check', async () => checkForCustomUpdate());
+  ipcMain.handle('updater:download', async () => downloadCustomUpdate());
+  ipcMain.handle('updater:restart', async () => installCustomUpdate());
+
   ipcMain.handle('updater:openUpdateFolder', async () => {
-    const openedPath = await openShipItFolder();
-    log.info('[updater] open update folder', { openedPath });
-    return openedPath;
+    await fs.mkdir(UPDATE_DOWNLOAD_DIR, { recursive: true });
+    await shell.openPath(UPDATE_DOWNLOAD_DIR);
+    return UPDATE_DOWNLOAD_DIR;
   });
-  ipcMain.handle('updater:restart', async () => {
-    log.info('[updater] restart requested', {
-      appVersion: app.getVersion(),
-      execPath: process.execPath
-    });
-    if (!updateDownloaded) {
-      log.warn('[updater] restart denied: update is not downloaded');
-      return { ok: false, reason: 'not-downloaded' as const };
-    }
 
-    if (isRunningFromMountedDmg()) {
-      log.warn('[updater] restart denied: app is running from mounted dmg', { execPath: process.execPath });
-      sendUpdaterState({
-        status: 'error',
-        message: 'Лаунчер запущен из DMG. Переместите его в /Applications и запустите оттуда.'
-      });
-      return { ok: false, reason: 'running-from-dmg' as const };
-    }
-
-    isQuitting = true;
-    app.removeAllListeners('window-all-closed');
-    if (restartFallbackTimer) {
-      clearTimeout(restartFallbackTimer);
-      restartFallbackTimer = null;
-    }
-
-    setImmediate(() => {
-      log.info('[updater] calling quitAndInstall');
-      autoUpdater.quitAndInstall(false, true);
-      restartFallbackTimer = setTimeout(async () => {
-        if (isQuitting) {
-          const shipItLogs = await readShipItLogs();
-          sendUpdaterState({
-            status: 'error',
-            message: 'Обновление скачано, но macOS не смог применить его.'
-          });
-          if (shipItLogs.trim()) {
-            mainWindow?.webContents.send('updater:shipit-log', shipItLogs);
-          }
-          log.error('[updater] apply failed: app still running after quitAndInstall', {
-            appVersion: app.getVersion(),
-            execPath: process.execPath
-          });
-        }
-      }, 8000);
-    });
-
-    return { ok: true };
-  });
+  ipcMain.handle('updater:logPath', async () => UPDATER_LOG_PATH);
 
   ipcMain.handle('app:quit', async () => {
     log.info('[app] quit requested from renderer');
@@ -591,9 +651,7 @@ app.whenReady().then(async () => {
     lastLauncherError = undefined;
 
     try {
-      await install((progress: InstallProgress) => {
-        emitProgress(progress);
-      });
+      await install((progress: InstallProgress) => emitProgress(progress));
       log.info('[ipc] launcher:install completed');
       return true;
     } catch (error) {
@@ -658,19 +716,6 @@ app.whenReady().then(async () => {
   });
 
   mainWindow = createWindow();
-
-  if (app.isPackaged) {
-    log.info('CHECKING FOR UPDATES');
-    autoUpdater.checkForUpdates().catch((error) => {
-      if (isUpdater404LatestMac(error)) {
-        log.warn('[updater] startup check: latest-mac.yml not found (treated as no updates)');
-        sendUpdaterState({ status: 'not-available', message: 'Обновления недоступны' });
-        return;
-      }
-      log.warn('[updater] startup check failed (non-fatal)', error);
-      sendUpdaterState({ status: 'not-available', message: 'Проверка обновлений пропущена' });
-    });
-  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

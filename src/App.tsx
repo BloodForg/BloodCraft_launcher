@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import logoUrl from './assets/bloodcraft-logo.svg';
 import { LoginScreen } from './components/LoginScreen';
 import { PlayButton } from './components/PlayButton';
@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '1.2.9';
+const APP_VERSION = '1.3.0';
 
 function App() {
   const {
@@ -66,17 +66,15 @@ function App() {
     addToast: s.addToast
   }));
   const selectedServer = useLauncherStore(selectSelectedServer);
-  const [restarting, setRestarting] = useState(false);
-  const [restartFailed, setRestartFailed] = useState(false);
-  const restartTimerRef = useRef<number | null>(null);
+
+  const updateBlocksPlay = updater.status === 'downloading' || updater.status === 'downloaded' || updater.status === 'installing' || updater.status === 'restarting';
 
   const handlePlayClick = () => {
-    if (updater.status === 'downloaded' || restarting) {
-      setBottomStatus('Сначала перезапустите лаунчер для установки обновления');
-      addToast('Сначала нажмите «Перезапустить» для применения обновления');
+    if (updateBlocksPlay) {
+      setBottomStatus('Сначала завершите установку обновления');
+      addToast('Обновление в процессе, запуск игры временно недоступен');
       return;
     }
-    console.log('[ui] play click');
     void logService.info('[ui] play click');
     void playSelectedServer();
   };
@@ -113,25 +111,9 @@ function App() {
       setUpdaterState(status);
     });
     void updateService.getStatus().then((status) => setUpdaterState(status));
-    void updateService.check();
+    void updateService.checkForUpdate();
     return () => unsubscribe();
   }, [token, setUpdaterState]);
-
-  useEffect(() => {
-    if (!token) return;
-    const unsubscribe = updateService.onShipItLog((text) => {
-      const preview = text.trim().split(/\r?\n/).slice(-10).join('\n');
-      void logService.error(`[updater] ShipIt log tail:\n${preview || '(empty)'}`);
-      addToast('Показан лог обновления (ShipIt).');
-    });
-    return () => unsubscribe();
-  }, [token, addToast]);
-
-  useEffect(() => {
-    return () => {
-      if (restartTimerRef.current) window.clearTimeout(restartTimerRef.current);
-    };
-  }, []);
 
   if (!authChecked) {
     return <div className="min-h-screen bg-bc-bg" />;
@@ -252,10 +234,10 @@ function App() {
                   </button>
                   <button
                     className="btn-secondary"
-                    disabled={!networkOnline}
+                    disabled={!networkOnline || updater.status === 'checking'}
                     onClick={async () => {
-                      const ok = await updateService.check();
-                      if (!ok) addToast('Проверка обновлений не удалась');
+                      const res = await updateService.checkForUpdate();
+                      if (!res.ok) addToast('Проверка обновлений не удалась');
                     }}
                   >
                     Проверить обновления
@@ -270,17 +252,19 @@ function App() {
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
               <p className="truncate text-sm">{bottomStatus}</p>
-              {(updater.status === 'checking' || updater.status === 'downloading' || updater.status === 'downloaded' || updater.status === 'available') && (
+              {(updater.status === 'checking' || updater.status === 'downloading' || updater.status === 'downloaded' || updater.status === 'update_available' || updater.status === 'installing' || updater.status === 'restarting') && (
                 <p className="text-xs text-bc-muted">
                   {updater.status === 'checking' && 'Проверка обновлений...'}
                   {updater.status === 'downloading' && `Загрузка обновления: ${updater.progress ?? 0}%`}
-                  {updater.status === 'available' && 'Доступно обновление'}
-                  {updater.status === 'downloaded' && 'Обновление готово к установке'}
+                  {updater.status === 'update_available' && 'Доступно обновление'}
+                  {updater.status === 'downloaded' && 'Обновление скачано'}
+                  {updater.status === 'installing' && 'Установка обновления...'}
+                  {updater.status === 'restarting' && 'Перезапуск лаунчера...'}
                 </p>
               )}
               {effectiveHelpText && <p className="text-xs text-bc-muted">{effectiveHelpText}</p>}
             </div>
-            <div className="flex w-[340px] items-center justify-end gap-2">
+            <div className="flex w-[430px] items-center justify-end gap-2">
               {playHelpAction === 'open-site' && (
                 <button className="btn-secondary text-xs" onClick={() => openExternal('https://thebloodcraft.ru')}>
                   Открыть сайт
@@ -311,73 +295,50 @@ function App() {
                   Открыть папку логов
                 </button>
               )}
-              {updater.status === 'available' && (
+
+              {updater.status === 'update_available' && (
                 <button
                   className="btn-secondary text-xs"
-                  disabled={!networkOnline}
                   onClick={async () => {
-                    const ok = await updateService.download();
+                    const ok = await updateService.downloadUpdate();
                     if (!ok) addToast('Не удалось скачать обновление');
                   }}
                 >
                   Скачать обновление
                 </button>
               )}
-              {(updater.status === 'downloaded' || restarting || restartFailed) && (
+
+              {updater.status === 'downloaded' && (
                 <button
                   className="btn-secondary text-xs"
-                  disabled={restarting}
                   onClick={async () => {
-                    if (restarting) return;
-                    setRestartFailed(false);
-                    setRestarting(true);
-                    setBottomStatus('Перезапуск...');
-                    const result = await updateService.restart();
+                    const result = await updateService.installUpdate();
                     if (!result.ok) {
-                      setRestarting(false);
-                      setBottomStatus(
-                        result.reason === 'running-from-dmg'
-                          ? 'Лаунчер запущен из DMG. Переместите его в /Applications и перезапустите.'
-                          : 'Перезапуск не удался — откройте приложение заново'
-                      );
-                      addToast(
-                        result.reason === 'not-downloaded'
-                          ? 'Обновление ещё не скачано'
-                          : result.reason === 'running-from-dmg'
-                            ? 'Запустите лаунчер из /Applications, а не из DMG'
-                            : 'Перезапуск не удался'
-                      );
-                      setRestartFailed(true);
-                      return;
+                      if (result.reason === 'permission-denied') {
+                        addToast('Не удалось установить обновление: нет прав на запись в /Applications.');
+                        return;
+                      }
+                      addToast('Не удалось запустить установку обновления');
                     }
-                    setBottomStatus('Закрываем лаунчер для установки обновления...');
                   }}
                 >
-                  {restarting ? 'Перезапуск...' : 'Перезапустить'}
+                  Установить обновление
                 </button>
               )}
-              {restartFailed && (
-                <>
-                  <button
-                    className="btn-secondary text-xs"
-                    onClick={() => {
-                      void updateService.openUpdateFolder();
-                    }}
-                  >
-                    Открыть папку обновления
-                  </button>
-                  <button
-                    className="btn-secondary text-xs"
-                    onClick={() => {
-                      void window.bloodcraft?.app?.quit();
-                    }}
-                  >
-                    Выйти
-                  </button>
-                </>
+
+              {updater.status === 'error' && (
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    void updateService.openUpdateFolder();
+                  }}
+                >
+                  Открыть папку updates
+                </button>
               )}
+
               <div className="w-[200px]">
-              <PlayButton state={effectivePlayState} progress={launchProgress} onClick={handlePlayClick} />
+                <PlayButton state={effectivePlayState} progress={launchProgress} onClick={handlePlayClick} />
               </div>
             </div>
           </div>
@@ -396,21 +357,18 @@ function App() {
             addToast('Нет соединения: проверка обновлений недоступна');
             return;
           }
-          const ok = await updateService.check();
-          if (!ok) addToast('Не удалось проверить обновления');
-        }}
-        onShowShipItLog={async () => {
-          const logs = await updateService.shipitLogs();
-          const preview = logs.trim().split(/\r?\n/).slice(-20).join('\n');
-          if (!preview) {
-            addToast('Лог обновления пока пуст');
-            return;
-          }
-          addToast('Лог обновления записан в launcher.log');
-          await logService.info(`[updater] ShipIt log tail:\n${preview}`);
+          const ok = await updateService.checkForUpdate();
+          if (!ok.ok) addToast('Не удалось проверить обновления');
         }}
         onOpenUpdateFolder={async () => {
           await updateService.openUpdateFolder();
+        }}
+        onOpenUpdaterLogPath={async () => {
+          const logPath = await updateService.logPath();
+          if (logPath) {
+            await logService.info(`[updater] log path: ${logPath}`);
+            addToast(`updater.log: ${logPath}`);
+          }
         }}
         onOpenLogsDir={async () => {
           await logService.openLogsDir();
