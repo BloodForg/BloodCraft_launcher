@@ -11,7 +11,7 @@ import { networkService } from './services/networkService';
 import { updateService } from './services/updateService';
 import { selectSelectedServer, useLauncherStore } from './store/useLauncherStore';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 function App() {
   const {
