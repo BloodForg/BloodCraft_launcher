@@ -1,6 +1,6 @@
 {
   "name": "bloodcraft-launcher",
-  "version": "1.3.1",
+  "version": "1.3.3",
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
@@ -20,16 +20,17 @@
     "verify:mac-consistency": "node scripts/verify-mac-update-consistency.mjs"
   },
   "dependencies": {
+    "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "electron-log": "^5.4.3",
+    "extract-zip": "^2.0.1",
     "framer-motion": "^11.11.9",
-    "minecraft-launcher-core": "^3.18.2",
     "keytar": "^7.9.0",
+    "minecraft-launcher-core": "^3.18.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sharp": "^0.34.5",
-    "zustand": "^4.5.5",
-    "axios": "^1.13.2"
+    "zustand": "^4.5.5"
   },
   "devDependencies": {
     "@types/node": "^22.8.7",
